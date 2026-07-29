@@ -69,7 +69,8 @@ tooling, i18n. Each is addressed in §12 as a documented future step rather than
 | Stream topology | One `EventSource` per running task | Simplest correct thing; limitation documented and moot over HTTP/2 | Multiplexed stream — the fix, deferred behind one hook |
 | Frontend data | React + Vite + TanStack Query | Loading/error/empty/refetch for free, and all four are graded | Plain hooks — reimplements the same thing worse |
 | Styling | Tailwind v4 | Responsive layout, status pills and skeletons are three graded requirements it makes fast; v4 is one dev dep + one import, no PostCSS config | CSS Modules — hand-writing things nobody is grading |
-| Routing | **No router** — `?agent=&task=` via History API | ~15 lines, gives shareable deep links and survives refresh | React Router — a dependency for one screen |
+| Rendering | Client-rendered SPA | Nothing to index, and it's behind a login in any real deployment — server rendering would be paid for and unused | Next.js SSR — better on slow connections and required for SEO, neither of which applies |
+| Routing | **React Router** | Two real views (`/agents/:id`, `/tasks`); back/forward must work on selection; route-level error and loading boundaries are graded requirements | Hand-rolled `history.pushState` + `popstate` — see below |
 | Tests | Vitest + Testing Library | Shares Vite config; fast | |
 
 **Seven load-bearing choices:** Hono, Drizzle + libSQL, React, Vite, TanStack Query, Tailwind, Vitest.
@@ -336,8 +337,53 @@ the code that becomes wrong under horizontal scaling — see §12.
 
 ## 9. Frontend
 
-Two panes on desktop, stacked on mobile. Selection lives in the URL (`?agent=&task=`) via
-`history.replaceState`, so links are shareable and refresh preserves context.
+### How rendering actually works
+
+A **client-rendered SPA**. The server never builds HTML for a page. One port, two jobs, decided by a
+single rule:
+
+| Request | Server does |
+|---|---|
+| `/api/**` | Runs the route handler — JSON, or a held-open SSE stream |
+| `/assets/**` | Returns the built file from disk |
+| **anything else** | **Returns `index.html`** — the catch-all |
+
+First load of a deep link like `/tasks`: browser requests it → Hono matches no API route and returns
+`index.html` → the bundle downloads and React boots → **React Router** reads the URL and renders the
+shell with skeletons → TanStack Query fetches from `/api`, and any live run opens its stream.
+
+Two consequences: the server returns the *same* `index.html` regardless of path — it doesn't know the
+route table, which is why the catch-all is mandatory (§11a). And after that first load, navigation costs
+nothing: it's a local component swap, with only data crossing the network.
+
+The cost is a blank screen until the JavaScript executes. Server rendering would fix that, and would be
+right for a public, indexable, slow-connection-facing site. This is none of those.
+
+### Routes and layout
+
+```
+/                 → redirect to /agents
+/agents           → agents grid, filter
+/agents/:agentId  → agent selected, its tasks alongside
+/tasks            → all tasks, with the agent column
+```
+
+Two panes on desktop, stacked on mobile.
+
+**Why React Router rather than URL-as-state.** The original call was `?agent=&task=` via
+`history.replaceState` — ~15 lines, no dependency, on the reasoning that selecting an agent filters a
+pane rather than navigating. Three things overturned it:
+
+1. **There are genuinely two views.** The all-tasks view (below) is a separate screen, so the
+   one-screen premise is false.
+2. **`replaceState` doesn't create history entries**, so back after selecting agent A then B would leave
+   the app rather than return to A. Users expect back to undo a selection — Gmail, Slack and Linear all
+   push. Fixing that means `pushState` plus a `popstate` listener plus syncing into React state, which is
+   writing a small worse router.
+3. **Route-level error and loading boundaries are graded**, and a router gives them a declarative home.
+
+Not TanStack Router: better designed and fully type-safe, but React Router is what a reviewer reads
+without pausing, and §2 says easy to explain.
 
 **Agents pane** — filter input matching name **and** description as the user types. Client-side: the
 dataset is small, and a debounced round-trip would be slower and worse.
@@ -517,6 +563,11 @@ Then a GitHub Action on push to `main` running `flyctl deploy`, so every merge s
 
 ### Deployment-specific gotchas
 
+- **SPA catch-all.** Client-side routing means a deep link like `/tasks` reaches the *server* with that
+  path. Without a catch-all serving `index.html` for every non-`/api`, non-asset path, a link that works
+  inside the app 404s when pasted into Slack. Three lines in Hono, and it only ever shows up once
+  deployed — another reason deploy is rung 1. Order matters: API routes and static assets are matched
+  first, catch-all last.
 - **SSE buffering** — same class as the Vite proxy. `Cache-Control: no-cache` plus the 15s heartbeat.
   Finding this at rung 1 with only `/health` deployed is the entire reason deploy comes first.
 - **Health check must not point at a streaming endpoint** — the machine gets killed as unhealthy.
@@ -777,7 +828,8 @@ during rollout needs additive-only changes and contract tests regardless of repo
 ## 15. Resolved
 
 - **Styling** → Tailwind v4.
-- **Routing** → no router; `?agent=&task=` via History API.
+- **Routing** → React Router. *Reversed from an earlier "no router" decision: the all-tasks view added a
+  second real screen, and `replaceState` breaks the back button on selection. See §9.*
 - **Repo visibility** → public, so reviewers need no invite.
 - **Expected challenge:** "one deployable, why three packages?" — because `core/package.json` declares no
   dependencies, so "the domain has no I/O" is verifiable by opening one file rather than trusted.
