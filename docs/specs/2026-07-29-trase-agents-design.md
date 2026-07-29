@@ -553,6 +553,23 @@ broken link.
 *Pricing and shell-access tiers on both platforms move; verify at rung 1 rather than trusting this
 document.*
 
+### Why not Vercel — stated accurately
+
+The *serving* shape — static bundle plus API — is exactly what Vercel is best at, and nine of our ten
+endpoints would be at home there. Only `POST /tasks/:id/run` and its streaming counterpart aren't: one
+returns immediately then works for fifteen seconds, the other holds a connection open.
+
+And it is genuinely **feasible**: swap SQLite for Neon Postgres, swap the in-process bus for Upstash
+Redis, trigger runs with `waitUntil` or QStash. Two swaps and two vendors — not a rewrite.
+
+It's rejected on **one requirement**. Both managed services need connection strings, so "clone it and run
+it, no credentials" is gone — the constraint §2 puts above everything else. Secondarily, `vercel dev`
+only approximates the serverless runtime, whereas `pnpm start` here *is* the deployed artifact.
+
+For a production SaaS the Vercel path may well be the better one: managed everything, no server to patch,
+preview deploys per PR. That is the position the README should take (§14) — the in-process choices are
+for local runnability, and production would go the other way.
+
 ### Dockerfile, not a buildpack
 
 Multi-stage: build (`pnpm install`, build web + server) → runtime (`node:24-slim`, dist + prod deps,
@@ -811,6 +828,46 @@ crash resumes at 39, not at 1. It brings two requirements with it:
   caps at 15 minutes and agent runs routinely exceed it. Enterprise agent platforms run on containers or
   a durable-execution engine, not raw functions.
 
+### How streaming works once the worker is separate
+
+The worker never talks to the browser. It writes each event to Postgres, then publishes a **payload-free
+wakeup** to Redis. Whoever holds the SSE connection receives the wakeup and re-reads Postgres for
+`seq > lastSent`.
+
+The §7 wakeup-only decision pays off far more here than it does in a single process: **because the
+message carries no payload, Redis's delivery guarantees stop mattering.** Redis pub/sub is
+fire-and-forget — a momentarily disconnected subscriber simply misses messages. If the event were in the
+message it would be gone permanently; as a wakeup, a dropped message costs latency until the next
+heartbeat and never costs data.
+
+*Footnote: Postgres `LISTEN/NOTIFY` does not substitute for Redis on serverless. `LISTEN` requires a
+dedicated long-lived connection, and poolers in transaction mode don't support it. It's a fine way to
+avoid running Redis on a long-lived server; it's the wrong tool on functions.*
+
+**Who holds the connection** — four answers:
+
+| Option | How | Cost |
+|---|---|---|
+| **1. Serverless function** | Invocation subscribes to Redis, writes to the response stream | Billed on wall-clock, not compute; Redis connections scale with *viewers*; dies at the duration cap — though `EventSource` reconnects with `Last-Event-ID` and the next invocation resumes exactly where the last stopped, invisibly |
+| **2. Long-polling** | `GET /events?since=7` waits ~25s, returns, client re-requests | Fits any duration limit, no persistent connections. More invocations, a little latency. Underrated |
+| **3. Managed realtime** (Ably, Pusher, Supabase Realtime) | Worker publishes to a channel; the function only mints a scoped token | Nothing of yours held open; fan-out is their problem. Another vendor and an SDK on the client. Keep the DB replay path — snapshot with `lastSeq`, then subscribe, dedupe by `seq` |
+| **4. Cloudflare Durable Objects** | One object per run holds connections and coordination state | Arguably the most elegant fit — the stateful thing gets to be stateful with no server to babysit. Cloudflare-specific, different mental model |
+
+**Choose by run duration:**
+
+| Runs last | Use |
+|---|---|
+| Seconds | Option 1 — reconnect covers the cap |
+| Seconds to minutes | Option 2 — cheaper than fighting duration limits |
+| Minutes to hours (**real agents**) | Option 3 or 4 — holding an invocation for an hour is untenable at any price |
+
+The honest one-line answer to "how does streaming work in production": **you stop holding connections on
+your own compute, because that is the single thing serverless is worst at.**
+
+Note that option 1's viability rests entirely on resume-after-disconnect — the `seq` + `Last-Event-ID`
++ `?since=` design from §7, built here for refresh-mid-run, is the same mechanism that makes serverless
+streaming survivable at all.
+
 ### How the current build maps onto it
 
 | Target plane | Ours today |
@@ -857,6 +914,26 @@ Each rung runs and demos on its own.
 Setup and run · architecture with the §4 diagram · **the streaming approach and why SSE** (the brief asks
 for this explicitly) · the seams table · the limitations table verbatim, including the yellows · testing
 approach and how to run them.
+
+### Must be stated explicitly: the local/production split
+
+The README should say plainly that **the in-process choices are for local runnability, and production
+would go the other way** — serverless functions, managed Postgres and Redis, no server to babysit.
+
+The reasoning, in the README's own words:
+
+> Nine of the ten endpoints are exactly what a serverless platform is best at. One isn't: `POST
+> /tasks/:id/run` returns immediately and then works for fifteen seconds, and it has a streaming
+> counterpart that holds a connection open. That's entirely doable serverless — `waitUntil`, managed
+> Postgres, managed Redis — but all three mean connection strings, and the priority here was that
+> anyone can clone this and run it with none. So the architecture is serverless-shaped and the
+> infrastructure is skipped: state is durable from the moment a run is created, the bus carries no
+> payload, cancellation is cooperative, and execution outlives the request. Every one of those is what
+> serverless would *require*, not a concession to it.
+
+This framing matters because it inverts the obvious reading. The in-process implementation isn't a
+simplification the design tolerates — it's the one piece deliberately left swappable, and §12a prices the
+swap.
 
 One further note belongs there rather than here: hand-written shared types work only while every consumer
 lives in this repo. A second consumer — a mobile app, a partner — means generating a client from an
