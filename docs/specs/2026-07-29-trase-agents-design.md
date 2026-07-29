@@ -58,7 +58,7 @@ tooling, i18n. Each is addressed in §12 as a documented future step rather than
 |---|---|---|---|
 | Hosting model | Single long-lived Node process | Background work and an in-process bus just work | Serverless — forces a `waitUntil` redesign for no benefit |
 | Repo layout | pnpm workspace: `core`, `server`, `web` | `core` declares zero dependencies — "the domain has no I/O" is verifiable by opening one file | Single package (weaker claim); four packages (plumbing) |
-| Backend framework | Hono | Built-in test client (no port binding); native streaming for SSE; host-portable | Express (manual SSE); Fastify (Node-only) |
+| Backend framework | Hono | See §3a | Express, Fastify, NestJS — see §3a |
 | Database | SQLite | Zero setup — the dominant constraint | Postgres + Docker (Docker becomes a prerequisite) |
 | SQLite driver | **`@libsql/client`** | Ships prebuilt binaries as ordinary npm optional deps — never compiles, no C++ toolchain, N-API so one binary spans Node versions | `better-sqlite3@13` (**0 prebuilds** — falls back to node-gyp, fails without Build Tools); `node:sqlite` (no stable Drizzle export; drizzle-kit can't connect) |
 | DB access | Drizzle (`drizzle-orm/libsql`) | Schema declared once; types and migrations derived from it; thin enough to drop to raw SQL | Raw SQL (types are a promise); Prisma (codegen, abstracts SQL away) |
@@ -76,6 +76,34 @@ tooling, i18n. Each is addressed in §12 as a documented future step rather than
 **Seven load-bearing choices:** Hono, Drizzle + libSQL, React, Vite, TanStack Query, Tailwind, Vitest.
 (The installed dependency count will be higher — this is a statement about decisions, not a `package.json`
 line count.)
+
+---
+
+## 3a. Why Hono over Express, Fastify or NestJS
+
+| | Express | Fastify | NestJS | Hono |
+|---|---|---|---|---|
+| Test without binding a port | ❌ needs supertest | ✅ `inject()` | ✅ testing module | ✅ `app.request()` |
+| SSE first-class | ❌ manual headers + `res.write` | ⚠️ via plugin | ⚠️ | ✅ `streamSSE` |
+| Runs unchanged on serverless | ❌ | ❌ | ❌ | ✅ Web Standard |
+| Reviewer reads it cold | ✅✅ | ✅ | ⚠️ heavy | ✅ |
+
+**Port-free testing** — `app.request('/tasks')` is a function call: no server, no port, no cleanup, no
+"address already in use" when test files run in parallel. The difference between fast deterministic API
+tests and slow occasionally-flaky ones.
+
+**SSE built in** — the decisive one, because SSE *is* the interesting part of this project. `writeSSE`
+takes `id`/`event`/`data` as fields rather than requiring hand-formatted wire protocol, and
+`stream.onAbort` / `stream.aborted` handle client disconnect. In Express all of that is hand-rolled.
+
+**Portability is the weakest of the three reasons** and shouldn't be led with. We deploy one Node process;
+"runs on Cloudflare Workers" buys nothing today and only pays off along the §12a path.
+
+**Honest ranking:** Fastify is a close second and equally defensible — it matches on port-free testing,
+and loses only on SSE being a plugin rather than a helper. Express is the safest choice for reviewer
+familiarity, and "boring technology" is a real virtue; it loses on both of the things this project
+actually needs. If the app grew heavy request-body validation across many endpoints, Fastify's built-in
+JSON Schema story would start to win.
 
 ---
 
@@ -224,20 +252,28 @@ that the wakeup crosses the process boundary — not ordered, exactly-once deliv
 ### The SSE handler
 
 ```ts
-let lastSent = Number(query.since ?? req.header("Last-Event-ID") ?? 0);
-const wake = bus.subscribe(runId);          // subscribe BEFORE the first read
+app.get("/api/runs/:id/events", (c) =>
+  streamSSE(c, async (stream) => {
+    let lastSent = Number(c.req.query("since") ?? c.req.header("Last-Event-ID") ?? 0);
+    const wake = bus.subscribe(runId);        // subscribe BEFORE the first read
+    stream.onAbort(() => wake.close());       // client left — unsubscribe or leak
 
-while (!closed) {
-  for (const e of await store.eventsAfter(runId, lastSent)) {
-    write(`id: ${e.seq}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
-    lastSent = e.seq;
-  }
-  if (await store.isTerminal(runId)) { write("event: done\ndata: {}\n\n"); break; }
-  await wake.next({ timeoutMs: 15_000 });   // timeout doubles as heartbeat + self-heal
-}
+    while (!stream.aborted) {
+      for (const e of await store.eventsAfter(runId, lastSent)) {
+        await stream.writeSSE({ id: String(e.seq), event: e.type, data: JSON.stringify(e) });
+        lastSent = e.seq;
+      }
+      if (await store.isTerminal(runId)) {
+        await stream.writeSSE({ event: "done", data: "{}" });
+        break;
+      }
+      await wake.next({ timeoutMs: 15_000 }); // timeout doubles as heartbeat + self-heal
+    }
+  })
+);
 ```
 
-### Four things that are easy to get wrong
+### Five things that are easy to get wrong
 
 **`?since=` is required, not just `Last-Event-ID`.** The browser echoes `Last-Event-ID` only on its *own*
 automatic reconnect. A user hard-refreshing mid-run opens a brand-new `EventSource` with no header at all
@@ -251,6 +287,10 @@ replay everything, send `done`, close.
 
 **Headers:** `Cache-Control: no-cache`, `X-Accel-Buffering: no`, and the 15s heartbeat above. Proxy
 response buffering is the standard "works locally, dead once deployed" failure.
+
+**Unsubscribe on abort, or leak.** A user closing the tab or navigating away aborts the stream, but the
+bus subscription outlives it unless explicitly closed. `stream.onAbort(() => wake.close())`. One line,
+and without it every abandoned stream leaks a subscription — invisible in a demo, fatal over days.
 
 **Client-side gap detection:** if an arriving event has `seq > lastSeq + 1`, refetch `GET /runs/:id`.
 Two lines, and it makes the system self-healing rather than merely correct.
