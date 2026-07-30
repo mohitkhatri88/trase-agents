@@ -8,9 +8,9 @@ Manage agents, create tasks, and run them with live streaming progress.
 
 ---
 
-> **Status.** Everything below runs locally and is fully tested. Deployment to a public URL is the
-> one bonus not yet done — the design doc (`docs/specs/`) specifies the target and the plan; it simply
-> hasn't been executed yet.
+> **Status.** Everything below runs locally and is fully tested. The deployment artifacts
+> (`Dockerfile`, `render.yaml`) are built and verified against a local container; the public URL goes
+> live when the Render service is created — see [Deployment](#deployment).
 
 ## Setup
 
@@ -299,6 +299,40 @@ strings, so clone-and-run disappears. It's otherwise entirely feasible — two s
 not a rewrite.
 
 ---
+
+## Deployment
+
+One process serving both the API and the built UI, from a single container.
+
+```bash
+docker build -t trase-agents .
+docker run -p 3000:3000 -v trase-data:/data -e DATABASE_URL=file:/data/app.db trase-agents
+```
+
+**To Render:** dashboard → New → Blueprint → select this repo. `render.yaml` declares everything —
+Docker runtime, a 1GB disk mounted at `/data`, `healthCheckPath: /health`, and `numInstances: 1`.
+Auto-deploys on push to `main`.
+
+That instance count is a **correctness constraint, not a cost setting**. The event bus is in-process
+and the database is a file on one disk, so a second instance would see neither — it would look
+perfectly healthy while dropping every event for half of all users. Raising it requires the store and
+bus swaps described above, first.
+
+Verified locally against the real container, because these are the failures that only appear once
+it's containerised:
+
+| Checked | Result |
+|---|---|
+| Static UI, SPA catch-all on `/tasks`, API, `/health` | All 200, correct content types |
+| A run streaming end to end | 8 SSE frames, terminal `done` |
+| Restart with the disk attached | Data survived, no reseed |
+| `SIGTERM` mid-run | Run marked *"Interrupted by a server shutdown"*, not silently lost |
+| Platform-injected `PORT` | Binds correctly (Render assigns its own) |
+
+The free tier can't attach a disk and sleeps after 15 minutes — a 30–60 second cold start reads as a
+broken link. Hence `plan: starter`. To run free anyway, drop the `disk:` block and set
+`DATABASE_URL=file:/tmp/app.db`; the database reseeds on every deploy, which for a demo is arguably
+a feature.
 
 ## Data model
 
