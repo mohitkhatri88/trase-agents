@@ -30,6 +30,8 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
 | `pnpm test` | Unit and integration tests (147) |
 | `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm --filter @trase/e2e install-browsers` once first |
+| `pnpm test:e2e:report` | Open the HTML report from the last e2e run |
+| `pnpm test:e2e:ui` | Playwright's interactive UI mode, for stepping through a test |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
 | `pnpm typecheck` | TypeScript across every package |
 | `pnpm db:reset` | Delete the local database so the next boot reseeds |
@@ -170,9 +172,13 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 **179 tests.** 147 unit and integration, 32 end-to-end.
 
 ```bash
-pnpm test        # 147, ~2s
-pnpm test:e2e    # 32, ~14s
+pnpm test               # 147, ~2s
+pnpm test:e2e           # 32, ~14s
+pnpm test:e2e:report    # HTML report from the last run — traces, screenshots
 ```
+
+Playwright lives in `packages/e2e`, so `pnpm exec playwright …` from the repo root won't resolve it.
+The scripts above route to the right workspace; `pnpm --filter @trase/e2e exec playwright …` works too.
 
 ### The thing that makes this testable
 

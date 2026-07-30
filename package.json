@@ -12,6 +12,8 @@
     "start": "node packages/server/dist/index.js",
     "test": "pnpm --filter @trase/core build && pnpm --filter @trase/core test && pnpm --filter @trase/server test && pnpm --filter @trase/web test",
     "test:e2e": "pnpm --filter @trase/e2e test",
+    "test:e2e:report": "pnpm --filter @trase/e2e report",
+    "test:e2e:ui": "pnpm --filter @trase/e2e test:ui",
     "db:reset": "pnpm --filter @trase/server db:reset",
     "typecheck": "pnpm --filter @trase/core build && pnpm -r typecheck"
   },
