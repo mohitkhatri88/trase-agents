@@ -28,7 +28,7 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (129) |
+| `pnpm test` | Unit and integration tests (130) |
 | `pnpm test:e2e` | Playwright end-to-end tests (28) — run `pnpm --filter @trase/e2e install-browsers` once first |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
 | `pnpm typecheck` | TypeScript across every package |
@@ -154,10 +154,10 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**157 tests.** 129 unit and integration, 28 end-to-end.
+**158 tests.** 130 unit and integration, 28 end-to-end.
 
 ```bash
-pnpm test        # 129, ~2s
+pnpm test        # 130, ~2s
 pnpm test:e2e    # 28, ~12s
 ```
 
@@ -179,7 +179,7 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 |---|---|
 | `core` (16) | Engine state machine, failure injection, cancel before/between steps, seeded RNG reproducibility |
 | `server` (90) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
-| `web` (23) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
+| `web` (24) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
 | `e2e` (28) | Real browser against the real production build |
 
 ### How the e2e suite stays deterministic
