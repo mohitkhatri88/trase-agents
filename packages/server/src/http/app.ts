@@ -25,7 +25,10 @@ export function createApp(deps: AppDeps): Hono {
   const healthBody = () => ({
     status: "ok" as const,
     node: process.version,
-    commit: process.env.COMMIT_SHA ?? "dev",
+    // RENDER_GIT_COMMIT is injected by the platform; COMMIT_SHA is the manual
+    // override for anywhere else. The first question during any incident is
+    // "is what I'm looking at what I deployed?", and this answers it.
+    commit: process.env.COMMIT_SHA ?? process.env.RENDER_GIT_COMMIT ?? "dev",
     startedAt: STARTED_AT,
   });
 
