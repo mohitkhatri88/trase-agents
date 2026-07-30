@@ -868,6 +868,37 @@ Note that option 1's viability rests entirely on resume-after-disconnect — the
 + `?since=` design from §7, built here for refresh-mid-run, is the same mechanism that makes serverless
 streaming survivable at all.
 
+### Production would *also* be servers — on the merits, not as a compromise
+
+The reflex answer to "how would you run this in production?" is serverless. For a typical SaaS — request
+in, query, response out, spiky traffic, nothing long-running — that reflex is correct.
+
+**An agent platform is the exception**, and it's worth saying so explicitly because it inverts the
+expected answer:
+
+| Workload | Shape | Serverless fit |
+|---|---|---|
+| Agent runs | Minutes to hours, CPU-light, mostly waiting on external calls | ❌ duration caps, and you pay for waiting |
+| Live progress streaming | Many long-held connections | ❌ the single worst case for serverless |
+| CRUD API | Short requests, modest B2B volume | ✅ fine — but the smallest part of the work |
+| Sandboxed tool execution | Needs runtime control and isolation | ❌ |
+
+**The two dominant workloads are precisely the two things serverless is worst at.** Which matches what
+real agent platforms actually run: containers or Kubernetes for execution (sandboxing needs control), a
+durable execution engine (Temporal, Inngest) for long workflows, and often a managed realtime service for
+streaming. Not FaaS.
+
+So the production answer for a product like this is **containers + queue + durable execution**, with
+serverless at most for the thin CRUD API.
+
+The rule underneath: *serverless is for work that starts and finishes quickly. The more of a product's
+value lives in things that take a long time or stay connected, the less it fits.* An agent platform is
+close to the definition of "takes a long time and stays connected."
+
+**Note this makes the local choice and the production choice agree** — a long-lived process is right in
+both, for different reasons. Local: zero-setup runnability. Production: the workload shape. The pieces
+that differ between them are exactly the ones behind interfaces (§12).
+
 ### How the current build maps onto it
 
 | Target plane | Ours today |
@@ -934,6 +965,27 @@ The reasoning, in the README's own words:
 This framing matters because it inverts the obvious reading. The in-process implementation isn't a
 simplification the design tolerates — it's the one piece deliberately left swappable, and §12a prices the
 swap.
+
+### And the second inversion: production is servers too
+
+The README should then go one step further, because the expected answer is wrong for this product:
+
+> The reflex is that production means serverless. For most SaaS that's right. An agent platform is the
+> exception: its two dominant workloads are runs that last minutes to hours and connections held open to
+> watch them — precisely the two things serverless handles worst. Which is why real agent platforms run
+> containers for execution, a durable execution engine for long workflows, and often a managed realtime
+> service for streaming. So production here is **containers + queue + durable execution**, with serverless
+> at most for the thin CRUD API.
+>
+> Which means the local choice and the production choice agree, for different reasons. Locally a
+> long-lived process is what makes zero-setup possible. In production it's what the workload actually
+> wants. What differs between them is only what sits behind the interfaces in §12.
+
+**Be precise about provenance.** The zero-setup constraint is self-imposed, not from the brief — the brief
+asks for a README explaining setup, and nothing in it forces a server. `waitUntil` plus a hosted Postgres
+would satisfy every stated requirement. The defensible phrasing is *"I imposed a constraint that this
+runs with one command and no credentials, and that forced a server"* — not *"the requirements forced a
+server,"* which anyone holding the brief can falsify.
 
 One further note belongs there rather than here: hand-written shared types work only while every consumer
 lives in this repo. A second consumer — a mobile app, a partner — means generating a client from an
