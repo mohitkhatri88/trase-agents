@@ -12,11 +12,16 @@ const dataDir = mkdtempSync(join(tmpdir(), "trase-e2e-"));
 
 export default defineConfig({
   testDir: "./tests",
+  // Both are resolved against cwd, which is the repo root now that the suite
+  // runs from there — without these, artefacts land beside package.json.
+  outputDir: "./test-results",
   fullyParallel: false, // one server, one SQLite file, one writer
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? "list" : [["list"], ["html", { open: "never" }]],
+  reporter: process.env.CI
+    ? "list"
+    : [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
   timeout: 30_000,
   expect: { timeout: 10_000 },
 
@@ -33,7 +38,7 @@ export default defineConfig({
   // actually ships.
   webServer: {
     command: "pnpm build && node packages/server/dist/index.js",
-    cwd: join(import.meta.dirname, "../.."),
+    cwd: join(import.meta.dirname, ".."),
     url: `${BASE_URL}/health`,
     timeout: 180_000,
     reuseExistingServer: false,

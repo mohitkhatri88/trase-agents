@@ -11,13 +11,16 @@
     "build": "pnpm --filter @trase/core build && pnpm --filter @trase/web build && pnpm --filter @trase/server build",
     "start": "node packages/server/dist/index.js",
     "test": "pnpm --filter @trase/core build && pnpm --filter @trase/core test && pnpm --filter @trase/server test && pnpm --filter @trase/web test",
-    "test:e2e": "pnpm --filter @trase/e2e test",
-    "test:e2e:report": "pnpm --filter @trase/e2e report",
-    "test:e2e:ui": "pnpm --filter @trase/e2e test:ui",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:report": "playwright show-report e2e/playwright-report",
+    "test:e2e:ui": "playwright test --config e2e/playwright.config.ts --ui",
     "db:reset": "pnpm --filter @trase/server db:reset",
-    "typecheck": "pnpm --filter @trase/core build && pnpm -r typecheck"
+    "typecheck": "pnpm --filter @trase/core build && pnpm -r typecheck && tsc --noEmit -p e2e/tsconfig.json",
+    "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.13.0",
     "typescript": "^5.7.3"
   }
 }

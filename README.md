@@ -29,7 +29,7 @@ install. Sample agents and tasks are seeded automatically on first boot.
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
 | `pnpm test` | Unit and integration tests (147) |
-| `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm --filter @trase/e2e install-browsers` once first |
+| `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm e2e:install` once first |
 | `pnpm test:e2e:report` | Open the HTML report from the last e2e run |
 | `pnpm test:e2e:ui` | Playwright's interactive UI mode, for stepping through a test |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
@@ -79,7 +79,7 @@ changed for run N" — never what changed.
 | `packages/server/http` | Hono routes. Translate HTTP to store and runner calls; no business logic |
 | `packages/server/bus.ts` | The wakeup bus |
 | `packages/web` | React SPA |
-| `packages/e2e` | Playwright |
+| `e2e/` | Playwright. Not a workspace package — it tests the assembled system, not any one package |
 
 ### Rendering
 
@@ -177,8 +177,12 @@ pnpm test:e2e           # 32, ~14s
 pnpm test:e2e:report    # HTML report from the last run — traces, screenshots
 ```
 
-Playwright lives in `packages/e2e`, so `pnpm exec playwright …` from the repo root won't resolve it.
-The scripts above route to the right workspace; `pnpm --filter @trase/e2e exec playwright …` works too.
+`e2e/` sits beside `packages/` rather than inside it, and deliberately isn't a workspace package: it
+doesn't test a package, it tests the assembled system — the server, serving the built bundle, against
+a real database, in a browser. Making it a sibling of `core`/`server`/`web` would imply it's another
+layer of the app, and putting it *inside* `web` would be worse: that package would then depend on
+Playwright and appear to own tests that boot SQLite. Playwright is a root dev dependency for the same
+reason, which also means `pnpm exec playwright …` just works from the repo root.
 
 ### The thing that makes this testable
 
