@@ -14,6 +14,8 @@ export interface RunnerDeps {
   bus: InProcessBus;
   clock: Clock;
   rng: Rng;
+  /** Wall-clock budget per run. Omit for no limit. */
+  timeoutMs?: number;
 }
 
 export function createRunner(deps: RunnerDeps): Runner {
@@ -35,7 +37,11 @@ export function createRunner(deps: RunnerDeps): Runner {
       },
     };
 
-    await execute(profile, sink, { clock: deps.clock, rng: deps.rng });
+    await execute(profile, sink, {
+      clock: deps.clock,
+      rng: deps.rng,
+      timeoutMs: deps.timeoutMs,
+    });
   }
 
   return {

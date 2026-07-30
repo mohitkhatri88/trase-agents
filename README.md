@@ -28,7 +28,7 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (147) |
+| `pnpm test` | Unit and integration tests (158) |
 | `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm e2e:install` once first |
 | `pnpm test:e2e:report` | Open the HTML report from the last e2e run |
 | `pnpm test:e2e:ui` | Playwright's interactive UI mode, for stepping through a test |
@@ -169,10 +169,10 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**179 tests.** 147 unit and integration, 32 end-to-end.
+**190 tests.** 158 unit and integration, 32 end-to-end.
 
 ```bash
-pnpm test               # 147, ~2s
+pnpm test               # 158, ~2s
 pnpm test:e2e           # 32, ~14s
 pnpm test:e2e:report    # HTML report from the last run — traces, screenshots
 ```
@@ -200,8 +200,8 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 
 | Suite | What it covers |
 |---|---|
-| `core` (16) | Engine state machine, failure injection, cancel before/between steps, seeded RNG reproducibility |
-| `server` (95) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
+| `core` (23) | Engine state machine, failure injection, cancel before/between steps, the time budget, seeded RNG reproducibility |
+| `server` (99) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
 | `web` (37) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
 | `e2e` (32) | Real browser against the real production build |
 
@@ -339,10 +339,7 @@ right default and it is what every well-behaved worker does, but it only answers
 mind."* It does not answer *"stop now, it is deleting things"* or *"it is wedged and checking
 nothing."* Three separate gaps:
 
-**Timeouts.** A per-step and per-run budget, after which the run is abandoned and marked failed. This
-is the automated stop button, and it matters most precisely when nobody is watching. Cheap here —
-the engine already takes an injected clock, so it stays deterministically testable. This is the first
-thing I'd add.
+**Timeouts — built, see [Run time budget](#run-time-budget).** The remaining two are not.
 
 **Hard cancellation**, which needs process isolation. Today the engine runs inside the API server, so
 killing a run means killing the server and everyone else's runs with it. Move execution into its own
@@ -513,5 +510,36 @@ place the engine knows nothing is half-done.
 The UI splits the difference: the button flips to "Cancelling…" the instant you click, so the system
 tells you it heard you even though the work hasn't stopped. **Instant feedback, safe action.**
 
-What this does *not* give you is a hard stop for a run that's gone wrong or wedged — see
-[What I'd build next](#what-id-build-next).
+What this does *not* give you is a hard stop for a run that's gone wrong — see
+[What I'd build next](#what-id-build-next). For a run that's merely *stuck*, there's a budget:
+
+## Run time budget
+
+Every run gets a wall-clock budget, 60 seconds by default (`TRASE_RUN_TIMEOUT_MS`; `0` or `off`
+disables it). Outlive it and the run is abandoned and marked failed.
+
+This is the automated stop button, and it matters most when nobody is watching — a wedged run would
+otherwise sit at `running` until someone noticed.
+
+**It is deliberately allowed to fire part way through a step, which is the opposite of what
+cancellation does.** Cancellation waits for a safe boundary because the caller changed their mind and
+can afford to wait. A timeout fires precisely when the run may never *reach* another boundary — a
+step blocked on a socket that will never answer. Waiting politely for a checkpoint that isn't coming
+is how a run hangs forever.
+
+That trade is recorded honestly rather than hidden. Against the Nightly Reconciler (~10s of work)
+with a 3 second budget:
+
+```
++0.00s  running
++0.00s  Loading ledger…
++1.92s  Loading ledger — done
++1.92s  Fetching settlements…
++2.97s  Exceeded the 3.0s time budget during "Fetching settlements"
+        — abandoned, and this step's effect is unknown
++2.97s  failed
+```
+
+Note what survives: the steps that *did* complete are still in the log, so a reader can see exactly
+how far it got, and the message names the abandoned step and admits its effect is unknown. The run is
+terminal, so the task is immediately free to retry.

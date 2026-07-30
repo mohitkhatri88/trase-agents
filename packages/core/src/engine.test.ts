@@ -139,3 +139,87 @@ describe("execute", () => {
     expect(sink.messages()).toEqual(["running", "completed"]);
   });
 });
+
+describe("time budget", () => {
+  const threeSteps: SimulationProfile = {
+    steps: [
+      { label: "First", minMs: 100, maxMs: 100, failureRate: 0 },
+      { label: "Second", minMs: 100, maxMs: 100, failureRate: 0 },
+      { label: "Third", minMs: 100, maxMs: 100, failureRate: 0 },
+    ],
+  };
+
+  const fixedRng: Rng = { float: () => 0.9, intBetween: (min) => min };
+
+  it("completes normally when the run fits inside the budget", async () => {
+    const sink = new RecordingSink();
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 10_000 });
+
+    expect(sink.statuses()).toEqual(["running", "completed"]);
+  });
+
+  it("has no limit at all when no budget is given", async () => {
+    const sink = new RecordingSink();
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng });
+
+    expect(sink.statuses()).toEqual(["running", "completed"]);
+  });
+
+  it("fails the run when the budget runs out", async () => {
+    const sink = new RecordingSink();
+    // Two steps fit in 250ms; the third does not.
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 250 });
+
+    expect(sink.statuses()).toEqual(["running", "failed"]);
+    expect(sink.messages()).toContain("First — done");
+    expect(sink.messages()).toContain("Second — done");
+    expect(sink.messages()).not.toContain("Third — done");
+  });
+
+  it("names the step it abandoned and admits the effect is unknown", async () => {
+    const sink = new RecordingSink();
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 250 });
+
+    const error = sink.events.find((e) => e.type === "error");
+    expect(error?.message).toContain("Third");
+    expect(error?.message).toContain("250ms");
+    expect(error?.message).toContain("unknown");
+  });
+
+  it("stops part way through a step rather than waiting for a boundary", async () => {
+    // The point of a timeout: a run whose FIRST step outlives the budget must
+    // still stop, or a wedged step hangs forever waiting for a checkpoint that
+    // never arrives.
+    const clock = new FakeClock();
+    const sink = new RecordingSink();
+    const oneLongStep: SimulationProfile = {
+      steps: [{ label: "Wedged", minMs: 60_000, maxMs: 60_000, failureRate: 0 }],
+    };
+
+    await execute(oneLongStep, sink, { clock, rng: fixedRng, timeoutMs: 500 });
+
+    expect(sink.statuses()).toEqual(["running", "failed"]);
+    // It waited the budget, not the step's full duration.
+    expect(clock.elapsed).toBe(500);
+  });
+
+  it("reports the budget in seconds once it is over a second", async () => {
+    const sink = new RecordingSink();
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 150 });
+
+    const sink2 = new RecordingSink();
+    await execute(threeSteps, sink2, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 2500 });
+
+    expect(sink.events.find((e) => e.type === "error")?.message).toContain("150ms");
+    // 2.5s budget still fits all three 100ms steps, so nothing fails there.
+    expect(sink2.statuses()).toEqual(["running", "completed"]);
+  });
+
+  it("still honours cancellation ahead of the budget", async () => {
+    const sink = new RecordingSink();
+    sink.cancelFromCheck = 1;
+    await execute(threeSteps, sink, { clock: new FakeClock(), rng: fixedRng, timeoutMs: 1 });
+
+    expect(sink.statuses()).toEqual(["running", "cancelled"]);
+  });
+});

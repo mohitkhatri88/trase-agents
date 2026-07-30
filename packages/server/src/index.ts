@@ -17,6 +17,24 @@ const log = (msg: string, extra: Record<string, unknown> = {}) =>
  * about tests. TRASE_SPEED compresses sleeps; TRASE_OUTCOME forces every run to
  * succeed or fail; TRASE_SEED makes the randomness reproducible.
  */
+const DEFAULT_RUN_TIMEOUT_MS = 60_000;
+
+/**
+ * A run that outlives this is abandoned and marked failed.
+ *
+ * The automated stop button: it matters most when nobody is watching, which is
+ * exactly when a wedged run would otherwise sit at `running` forever. Set
+ * TRASE_RUN_TIMEOUT_MS=2000 to watch it fire against the slower seeded agents.
+ */
+function resolveRunTimeout(): number | undefined {
+  const raw = process.env.TRASE_RUN_TIMEOUT_MS;
+  if (raw === undefined || raw === "") return DEFAULT_RUN_TIMEOUT_MS;
+  if (raw === "0" || raw.toLowerCase() === "off") return undefined;
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_RUN_TIMEOUT_MS;
+}
+
 function resolveEngineDeps(): { clock: Clock; rng: Rng; mode: string } {
   const speed = Number(process.env.TRASE_SPEED ?? "1");
   const clock = Number.isFinite(speed) && speed !== 1 ? scaledClock(speed) : realClock;
@@ -41,7 +59,8 @@ async function main() {
   const store = createStore(db);
   const bus = new InProcessBus();
   const { clock, rng, mode } = resolveEngineDeps();
-  const runner = createRunner({ store, bus, clock, rng });
+  const timeoutMs = resolveRunTimeout();
+  const runner = createRunner({ store, bus, clock, rng, timeoutMs });
 
   if (await seedIfEmpty(store)) log("seeded sample agents and tasks");
 
@@ -63,7 +82,7 @@ async function main() {
   });
 
   const port = Number(process.env.PORT ?? 3000);
-  const server = serve({ fetch: app.fetch, port }, () => log("listening", { port, engine: mode }));
+  const server = serve({ fetch: app.fetch, port }, () => log("listening", { port, engine: mode, runTimeoutMs: timeoutMs ?? "off" }));
 
   // Port 3000 is the most commonly occupied port on a developer machine, and a
   // raw EADDRINUSE stack trace is a poor first impression for a project whose

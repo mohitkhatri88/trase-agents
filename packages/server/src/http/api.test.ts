@@ -469,3 +469,62 @@ describe("agent behaviour on create", () => {
     expect(["completed", "failed"]).toContain(finished?.status);
   });
 });
+
+describe("run time budget", () => {
+  const longProfile = {
+    steps: [
+      { label: "Step one", minMs: 1000, maxMs: 1000, failureRate: 0 },
+      { label: "Step two", minMs: 1000, maxMs: 1000, failureRate: 0 },
+      { label: "Step three", minMs: 1000, maxMs: 1000, failureRate: 0 },
+    ],
+  };
+
+  it("abandons a run that outlives its budget and marks it failed", async () => {
+    const { app, store, runner } = await makeTestApp({ timeoutMs: 1500 });
+    const { task } = await seedAgentAndTask(store, longProfile);
+
+    const { runId } = await (await app.request(`/api/tasks/${task.id}/run`, jsonPost())).json();
+    await runner.settled();
+
+    const run = await store.runs.get(runId);
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toContain("time budget");
+    expect(run?.error).toContain("unknown");
+  });
+
+  it("leaves a run inside its budget completely alone", async () => {
+    const { app, store, runner } = await makeTestApp({ timeoutMs: 60_000 });
+    const { task } = await seedAgentAndTask(store, longProfile);
+
+    const { runId } = await (await app.request(`/api/tasks/${task.id}/run`, jsonPost())).json();
+    await runner.settled();
+
+    expect((await store.runs.get(runId))?.status).toBe("completed");
+  });
+
+  it("records the abandonment in the event stream, not only on the row", async () => {
+    const { app, store, runner } = await makeTestApp({ timeoutMs: 1500 });
+    const { task } = await seedAgentAndTask(store, longProfile);
+
+    const { runId } = await (await app.request(`/api/tasks/${task.id}/run`, jsonPost())).json();
+    await runner.settled();
+
+    const messages = (await store.runs.eventsAfter(runId, 0)).map((e) => e.message);
+    // The steps that did finish are still visible — a reader can see how far it got.
+    expect(messages).toContain("Step one — done");
+    expect(messages.some((m) => m.includes("time budget"))).toBe(true);
+    expect(messages.at(-1)).toBe("failed");
+  });
+
+  it("frees the task for a retry afterwards", async () => {
+    const { app, store, runner } = await makeTestApp({ timeoutMs: 1500 });
+    const { task } = await seedAgentAndTask(store, longProfile);
+
+    await app.request(`/api/tasks/${task.id}/run`, jsonPost());
+    await runner.settled();
+
+    // A timed-out run is terminal, so the one-active-run index lets a retry through.
+    expect((await app.request(`/api/tasks/${task.id}/run`, jsonPost())).status).toBe(202);
+    await runner.settled();
+  });
+});

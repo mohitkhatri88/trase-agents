@@ -45,7 +45,9 @@ export interface TestContext {
  * that would take eight seconds finishes in microseconds, and failures happen
  * exactly when the seed says they do.
  */
-export async function makeTestApp(opts: { rng?: Rng; clock?: Clock } = {}): Promise<TestContext> {
+export async function makeTestApp(
+  opts: { rng?: Rng; clock?: Clock; timeoutMs?: number } = {},
+): Promise<TestContext> {
   const db = await createTestDb();
   const store = createStore(db);
   const bus = new InProcessBus();
@@ -54,6 +56,7 @@ export async function makeTestApp(opts: { rng?: Rng; clock?: Clock } = {}): Prom
     bus,
     clock: opts.clock ?? new FakeClock(),
     rng: opts.rng ?? new SeededRng(1),
+    timeoutMs: opts.timeoutMs,
   });
   const app = createApp({ store, bus, runner });
 
