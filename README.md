@@ -331,19 +331,25 @@ described above, first.
 
 ### Cost
 
-Two layers, and they're easy to confuse. The **workspace** plan (Hobby $0 / Pro $25) buys team seats,
-bandwidth and audit logs. **Compute** is billed separately per instance. A solo project needs only
-Hobby, so the $25 tier is not required.
+Two layers, and they're easy to confuse:
 
-The blueprint ships `plan: free`, which costs nothing and has two consequences:
+- **Workspace plan** — Hobby $0 / Pro $25. Buys team seats, bandwidth, audit logs.
+- **Compute** — billed per instance, on top of any workspace plan.
 
-- **Spins down after 15 minutes idle**, ~1 minute to wake. A reviewer clicking cold waits.
-- **No persistent disk.** The database is ephemeral and resets on spin-down and deploy.
+A solo project needs only the free Hobby workspace. Note that paying for Pro would **not** remove the
+free tier's cold start, because sleeping is a property of the *instance type*, not the workspace — a
+$25 upgrade with a Free instance still sleeps.
 
-The reset is survivable, arguably good: seeding runs on boot, so every wake serves a clean, populated
-demo. The cold start is the real cost. To remove both, switch to `plan: starter`, point
-`DATABASE_URL` at `file:/data/app.db`, and uncomment the `disk:` block — it never sleeps and keeps
-its disk across deploys.
+The blueprint runs a **Starter instance (~$7/month, prorated by the second) on the free Hobby
+workspace**, plus a 1GB disk. That buys the two things the free tier can't give:
+
+- **It never sleeps.** Free spins down after 15 minutes idle and takes ~1 minute to wake, so a link
+  someone clicks once shows a blank loading page for that minute.
+- **The disk persists**, so a reviewer's tasks and run history survive restarts and deploys.
+
+To run at zero cost instead: set `plan: free`, drop the `disk:` block, and point `DATABASE_URL` at
+`file:/tmp/trase/app.db`. Seeding runs on boot, so every wake still serves a clean populated demo —
+you just trade the cold start back in.
 
 ### Verified against the real container
 

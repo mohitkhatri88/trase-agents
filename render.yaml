@@ -6,9 +6,16 @@
 # (Not "New → Static Site". This is a Node process serving an API and the built
 # UI from one port, which is a Web Service.)
 #
-# Runs on the free Hobby *workspace* plan — the $25 Pro plan buys team seats and
-# audit logs, none of which this needs. Only compute is billed, and the free
-# instance type below costs nothing.
+# COST. Two layers, easily confused:
+#
+#   • Workspace plan — Hobby $0 / Pro $25. Buys team seats, bandwidth, audit
+#     logs. A solo project needs none of it, so stay on Hobby.
+#   • Compute — billed per instance, on top of any workspace plan.
+#
+# Paying for Pro would NOT remove the free tier's cold start, because that is a
+# property of the instance type, not the workspace. The Starter instance below
+# is what removes it: ~$7/month on the free Hobby workspace, prorated by the
+# second, plus a few cents for the disk.
 
 services:
   - type: web
@@ -17,37 +24,19 @@ services:
     dockerfilePath: ./Dockerfile
     region: oregon
 
-    # ── Free tier ──────────────────────────────────────────────────────────
-    # Costs nothing, with two consequences worth knowing before you send the
-    # link to anyone:
-    #
-    #   1. Spins down after 15 minutes idle and takes ~1 minute to wake. A
-    #      reviewer clicking cold sees a loading page for that minute.
-    #   2. Cannot attach a persistent disk, so the database lives on an
-    #      ephemeral filesystem and resets on every spin-down and deploy.
-    #
-    # The reset is survivable — arguably good — because seeding runs on boot,
-    # so every wake hands the visitor a clean, populated demo. The cold start
-    # is the real cost.
-    plan: free
+    # Never sleeps. The free instance type spins down after 15 minutes idle and
+    # takes ~1 minute to wake, which for a link someone clicks once means a
+    # minute of blank loading page — the worst possible first impression for an
+    # app whose whole point is that it responds immediately.
+    plan: starter
 
-    # ── To remove both, switch to a paid instance ──────────────────────────
-    # Replace `plan: free` with `plan: starter`, set DATABASE_URL to
-    # file:/data/app.db below, and uncomment:
-    #
-    # disk:
-    #   name: trase-data
-    #   mountPath: /data
-    #   sizeGB: 1
-    #
-    # Starter never sleeps and keeps its disk across deploys. Check the current
-    # price on Render's pricing page — it is billed as compute on top of the
-    # free Hobby workspace, not as a workspace upgrade.
-
-    # NOT a cost setting. The event bus is in-process and the database is a
-    # single file, so a second instance would see neither — it would look
+    # NOT a cost setting. The event bus is in-process and the database is a file
+    # on one disk, so a second instance would see neither — it would look
     # perfectly healthy while dropping every event for half of all users.
     # Raising this requires the store and bus swaps described in the README.
+    #
+    # Conveniently, attaching a disk constrains the service to one instance
+    # anyway, so the infrastructure enforces what the design already requires.
     numInstances: 1
 
     # Must not point at a streaming endpoint, or the instance gets killed as
@@ -56,11 +45,16 @@ services:
 
     autoDeploy: true
 
+    # Keeps the SQLite file across restarts and deploys, so a reviewer's tasks
+    # and run history are still there when they come back.
+    disk:
+      name: trase-data
+      mountPath: /data
+      sizeGB: 1
+
     envVars:
-      # Ephemeral on the free tier, which is why seeding runs on every boot.
-      # Change to file:/data/app.db when attaching a disk.
       - key: DATABASE_URL
-        value: file:/tmp/trase/app.db
+        value: file:/data/app.db
       - key: NODE_ENV
         value: production
       # Render injects PORT; the server reads it and falls back to 3000.
