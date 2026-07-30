@@ -533,24 +533,30 @@ Also available: `pnpm test`, `pnpm seed --reset`, and `pnpm demo:run <agent>` (�
 
 ## 11a. Deployment
 
-**Fly.io**, one machine, one 1GB volume. Deployed at rung 1, before there is anything on top of it to
-confuse a failure.
+**Render**, paid starter tier, one instance, one persistent disk. Deployed at rung 1, before there is
+anything on top of it to confuse a failure.
 
-Three requirements drive the choice: a **long-lived process** (execution outlives the request), a
-**disk** (SQLite), and **exactly one instance** (in-process bus).
+Three requirements drive the choice of *host type*: a **long-lived process** (execution outlives the
+request), a **disk** (SQLite), and **exactly one instance** (in-process bus). Render, Fly and Railway all
+satisfy those; the choice between them is about operator experience, not architecture.
 
-### Why Fly over Render
+### Why Render over Fly
 
-Both run containers; both take a Dockerfile. The decision was made on debuggability, and one row decided
-it: `fly ssh sftp get /data/app.db` pulls the production database onto a laptop in one command. For an
-app whose entire state is a single file, inspecting the exact rows beats inferring from logs. `fly logs`
-tails in a terminal and `fly ssh console` gives a shell on the running machine.
+Fly was the original call, on one strong argument: `fly ssh sftp get /data/app.db` pulls the production
+database onto a laptop in one command, which for an app whose entire state is one file is the best
+debugging move available.
 
-Render wins on one-click rollback and a searchable log dashboard, and would be the right pick for someone
-who prefers a UI. Render's *free* tier is ruled out regardless: a 30–60 second cold start reads as a
-broken link.
+**Reversed on time-box risk.** Deployment is a *bonus* item, and Fly means learning a CLI, `fly.toml` and
+volumes on a deadline. Render is connect-the-repo-and-click — the same shape as the Vercel workflow
+already familiar from other projects — plus one-click rollback to any previous deploy and a searchable
+log dashboard. Auto-deploy on push is built in, so no GitHub Action is needed either.
 
-*Pricing and shell-access tiers on both platforms move; verify at rung 1 rather than trusting this
+Nothing about the design changes: both run a long-lived Node process from the same Dockerfile, so
+switching hosts later is an afternoon.
+
+Render's **free** tier is ruled out regardless — a 30–60 second cold start reads as a broken link.
+
+*Pricing, disk availability and shell-access tiers move; verify at rung 1 rather than trusting this
 document.*
 
 ### Why not Vercel — stated accurately
@@ -580,34 +586,31 @@ production runtime — same Node, same OS libraries, same layout. A buildpack bu
 environment, which cannot be reproduced locally, so a prod-only failure has no bisect path. Portability
 across hosts is a secondary benefit.
 
-### `fly.toml` carries an architectural invariant
+### Instance count is an architectural invariant, not a cost setting
 
-```toml
-[http_service]
-  auto_stop_machines   = true
-  min_machines_running = 0
-  max_machines_running = 1     # NOT a cost setting — see below
-```
+**Instance count must stay at 1.** The event bus is in-process and the database is a file on one disk; a
+second instance would see neither. It would scale up under load and appear healthy while dropping every
+event for half of all users.
 
-`max_machines_running = 1` is a **correctness constraint**. The event bus is in-process and the database
-is a file on one volume; a second machine would see neither. Fly would scale up under load and the app
-would appear healthy while dropping every event for half of all users. Comment it in the file, and note
-that changing it to `2` requires §12's store and bus swaps *first*.
+Record this in `render.yaml` with a comment, and note that raising it requires §12's store and bus swaps
+*first*.
 
-A Fly volume attaches to exactly one machine, so the infrastructure enforces what the design already
-requires.
+Helpfully, attaching a persistent disk generally constrains a service to a single instance and changes
+deploys from rolling to stop-then-start — so the infrastructure enforces what the design already
+requires, and there is no window where two instances overlap mid-deploy. **Verify this behaviour at
+rung 1**; if the platform does roll instead, two instances briefly coexist during every deploy and the
+in-process bus is wrong for that window.
 
 ### Setup sequence
 
-```bash
-fly launch --no-deploy
-fly volumes create data --size 1
-fly secrets set DATABASE_URL=file:/data/app.db
-fly deploy
-fly certs add agents.<domain>            # then add A/AAAA records — after .fly.dev is confirmed
-```
-
-Then a GitHub Action on push to `main` running `flyctl deploy`, so every merge ships.
+1. New Web Service → connect the GitHub repo → **Docker** as the runtime.
+2. Add a persistent disk, mounted at `/data`.
+3. Environment: `DATABASE_URL=file:/data/app.db`, `NODE_ENV=production`.
+4. Health check path → `/health`.
+5. Instance count → **1** (see above).
+6. Deploy. Auto-deploy on push to `main` is on by default — no CI workflow needed.
+7. Custom domain → add `agents.<domain>`, point the CNAME, certificate issues automatically. **Only after
+   the `.onrender.com` URL is confirmed working.**
 
 ### Built at rung 1, because they are useless retrofitted
 
@@ -627,10 +630,14 @@ Then a GitHub Action on push to `main` running `flyctl deploy`, so every merge s
   first, catch-all last.
 - **SSE buffering** — same class as the Vite proxy. `Cache-Control: no-cache` plus the 15s heartbeat.
   Finding this at rung 1 with only `/health` deployed is the entire reason deploy comes first.
-- **Health check must not point at a streaming endpoint** — the machine gets killed as unhealthy.
+- **Health check must not point at a streaming endpoint** — the instance gets killed as unhealthy.
 - **`SIGTERM` on deploy** kills in-flight runs. Boot-time orphan recovery catches them, but handling
   `SIGTERM` directly — stop accepting new runs, mark in-flight as interrupted — turns "the run vanished"
   into "interrupted by deploy." ~15 lines.
+- **Debugging without `ssh sftp`.** Fly's one-command database download isn't available here, so build
+  the replacement in: an authenticated `GET /admin/db` that streams the SQLite file, or a `/health`
+  detailed enough to answer most questions without one. Decide at rung 1 — this was Fly's single
+  advantage and it should be consciously replaced rather than quietly lost.
 
 ### Branch strategy
 
