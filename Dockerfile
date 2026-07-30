@@ -19,7 +19,6 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/core/package.json ./packages/core/
 COPY packages/server/package.json ./packages/server/
 COPY packages/web/package.json ./packages/web/
-COPY packages/e2e/package.json ./packages/e2e/
 
 # --ignore-scripts skips the root `prepare` hook, which would try to build core
 # before any source has been copied.

@@ -14,3 +14,6 @@ test-results
 **/test-results
 *.log
 .DS_Store
+
+# The end-to-end suite never runs in the production image
+e2e
