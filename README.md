@@ -324,6 +324,84 @@ not a rewrite.
 
 ---
 
+## What I'd build next
+
+One constraint shaped this codebase more than any other: **it has to run from a clean clone with one
+command and no credentials.** That is why the database is a file, the event bus is in memory, and the
+run engine executes inside the API process.
+
+Lift that constraint and the following becomes worth building, roughly in the order I'd do it.
+
+### 1. Stop a run that is stuck or doing damage
+
+The cancellation here is **cooperative** — it sets a flag the engine checks between steps. That is the
+right default and it is what every well-behaved worker does, but it only answers *"I changed my
+mind."* It does not answer *"stop now, it is deleting things"* or *"it is wedged and checking
+nothing."* Three separate gaps:
+
+**Timeouts.** A per-step and per-run budget, after which the run is abandoned and marked failed. This
+is the automated stop button, and it matters most precisely when nobody is watching. Cheap here —
+the engine already takes an injected clock, so it stays deterministically testable. This is the first
+thing I'd add.
+
+**Hard cancellation**, which needs process isolation. Today the engine runs inside the API server, so
+killing a run means killing the server and everyone else's runs with it. Move execution into its own
+process and you get the standard escalation ladder — flag, grace period, `SIGTERM`, grace period,
+`SIGKILL`, then reconcile the run as *terminated, state unknown*. That last part is the honest cost:
+a hard kill trades a running task for an unknown one.
+
+**Leases and heartbeats**, because a wedged worker often is not reading the cancel flag at all — it is
+blocked on a socket that will never answer. A worker that renews a lease every few seconds, and a
+sweeper that reclaims runs whose lease expired, catches hangs that no flag ever would.
+
+### 2. Treat safety as prevention, not interruption
+
+Worth stating plainly because it is easy to get backwards: **by the time you press stop, the
+destructive call has already returned.** Even an instant kill is too late. A faster stop button is not
+a safety feature.
+
+What actually bounds the damage sits upstream of execution:
+
+- **Permission gates on irreversible actions** — deleting, writing outside a workspace, spending
+  money, sending anything outward. The agent asks; a human approves.
+- **Sandboxing** — filesystem and network isolation, so the worst case is bounded by what the agent
+  can reach rather than by how fast someone reacts.
+- **Plan then execute** — surface intent before acting, so a plan can be vetoed instead of an
+  execution interrupted.
+- **Reversibility** — soft deletes, snapshots, compensating actions.
+
+Cancellation answers *"I changed my mind."* Safety answers *"that should never have been possible."*
+Conflating them leads to over-investing in the stop button and under-investing in the gate.
+
+### 3. Make runs survive a deploy
+
+Today a run dies with the process, and boot-time recovery marks it failed. A durable queue makes the
+run outlive the worker, and **durable execution** (Temporal, Restate, Inngest) makes it *resume*
+rather than restart — which is the distinction that matters once an agent run is forty steps and real
+money. It brings idempotency keys with it, because re-running a step that already sent an email is
+worse than losing the run.
+
+### 4. Run more than one instance
+
+Two swaps — SQLite to Postgres, the in-process bus to Redis — plus one thing that is **not** a swap:
+boot-time orphan recovery becomes actively wrong, since a second instance would mark the first
+instance's live runs as failed. That needs leases, which item 1 already introduces.
+
+### 5. Scale the read paths
+
+Server-side search and pagination once there are more than a few hundred agents; a multiplexed SSE
+stream if a user ever needs many simultaneous live runs; and a generated OpenAPI client once there is
+a second consumer, because hand-written shared types only work while every consumer lives in this
+repo.
+
+### 6. Product concerns this deliberately ignores
+
+Authentication and multi-tenancy, and with them **per-tenant concurrency limits and fair scheduling** —
+otherwise one tenant firing ten thousand runs starves everyone else. That is a product problem wearing
+an infrastructure costume, and it is the sort of thing an agent platform meets in month three.
+
+---
+
 ## Deployment
 
 One process serving both the API and the built UI, from a single container.
@@ -419,7 +497,21 @@ One error shape everywhere, so the frontend has exactly one thing to render:
 
 ## Cancellation is cooperative
 
-The engine checks for cancellation **between steps**. Work already in flight can't be interrupted —
-only asked to stop and allowed to notice at the next checkpoint. That isn't a shortcut; it's how
-Kubernetes and every job queue behave, and it's the only kind of cancellation that exists once the
-thing doing the work isn't the thing receiving the request.
+`POST /runs/:id/cancel` sets a flag and returns `202` immediately. It never touches the running
+engine. The engine reads that flag **between steps** — so if you cancel mid-step, the run finishes
+that step, comes round the loop, sees the flag, and stops.
+
+That isn't a shortcut. Work already in flight can't safely be interrupted: the step is standing in
+for an HTTP call, a database write, a file upload. Kill it halfway and you don't know whether it
+landed — you've traded a running task for an **unknown** one, which is worse. So the only safe
+cancellation is to ask, and let the worker stop where it knows what state the world is in. Kubernetes
+does this with `SIGTERM` before `SIGKILL`; Go's `context.Context` is the same pattern.
+
+The tuning knob is checkpoint granularity. Once per step is the natural choice, because it's the only
+place the engine knows nothing is half-done.
+
+The UI splits the difference: the button flips to "Cancelling…" the instant you click, so the system
+tells you it heard you even though the work hasn't stopped. **Instant feedback, safe action.**
+
+What this does *not* give you is a hard stop for a run that's gone wrong or wedged — see
+[What I'd build next](#what-id-build-next).
