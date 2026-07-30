@@ -1,4 +1,5 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
+import { scaledClock } from "@trase/core";
 import {
   cleanupTestDbs,
   failingProfile,
@@ -98,16 +99,28 @@ describe("GET /api/runs/:id/events", () => {
     expect(text).toContain(`id: ${all[1]!.seq}\n`);
   });
 
-  it("prefers ?since= over Last-Event-ID when both are present", async () => {
+  it("prefers Last-Event-ID over a stale ?since= when both are present", async () => {
     const ctx = await finishedRun();
     const all = await ctx.store.runs.eventsAfter(ctx.runId, 0);
     const last = all.at(-1)!.seq;
 
-    const { text } = await readStream(ctx, `/api/runs/${ctx.runId}/events?since=${last}`, {
-      headers: { "Last-Event-ID": "0" },
+    // EventSource reconnects to the SAME url, so ?since= is frozen at the
+    // cursor from when the stream first opened while the header is current.
+    // Preferring the query string would replay the whole log every reconnect.
+    const { text } = await readStream(ctx, `/api/runs/${ctx.runId}/events?since=0`, {
+      headers: { "Last-Event-ID": String(last) },
     });
 
-    // since= wins, so only the terminal `done` frame remains.
+    expect(text).not.toContain("event: run.log");
+    expect(text).toContain("event: done");
+  });
+
+  it("still honours ?since= when no header is sent, which is the hard-refresh case", async () => {
+    const ctx = await finishedRun();
+    const all = await ctx.store.runs.eventsAfter(ctx.runId, 0);
+
+    const { text } = await readStream(ctx, `/api/runs/${ctx.runId}/events?since=${all.at(-1)!.seq}`);
+
     expect(text).not.toContain("event: run.log");
     expect(text).toContain("event: done");
   });
@@ -161,5 +174,79 @@ describe("GET /api/runs/:id", () => {
   it("returns 404 for an unknown run", async () => {
     const ctx = await makeTestApp();
     expect((await ctx.app.request("/api/runs/999")).status).toBe(404);
+  });
+});
+
+/**
+ * Everything above asserts against an already-terminal run, which is what keeps
+ * those tests from hanging. But that means the loop body in runs.ts executes
+ * exactly once and breaks — so the parts that only matter while a run is LIVE
+ * (the bus wakeup driving the stream, incremental delivery, and closing the
+ * subscription on abort) would otherwise have no coverage at all.
+ */
+describe("streaming a live run", () => {
+  it("delivers events incrementally as they happen, not in one batch at the end", async () => {
+    const ctx = await makeTestApp({ clock: scaledClock(0.02) });
+    const { task } = await seedAgentAndTask(ctx.store, {
+      steps: Array.from({ length: 5 }, (_, i) => ({
+        label: `Step ${i + 1}`,
+        minMs: 400,
+        maxMs: 400,
+        failureRate: 0,
+      })),
+    });
+
+    const { runId } = await (await ctx.app.request(`/api/tasks/${task.id}/run`, jsonPost())).json();
+
+    const res = await ctx.app.request(`/api/runs/${runId}/events`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    const chunks: string[] = [];
+    while (chunks.length < 40) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    await ctx.runner.settled();
+
+    const body = chunks.join("");
+
+    // More than one chunk is the whole point: a single chunk would mean the
+    // response was buffered until the run finished rather than streamed.
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(body).toContain("Step 1…");
+    expect(body).toContain("Step 5 — done");
+    expect(body).toContain("event: done");
+
+    // Sequence numbers arrive in order, with no gaps.
+    const seqs = [...body.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1]));
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(seqs).toEqual(Array.from({ length: seqs.length }, (_, i) => i + 1));
+  });
+
+  it("releases its bus subscription when the client goes away", async () => {
+    const ctx = await makeTestApp({ clock: scaledClock(0.05) });
+    const { task } = await seedAgentAndTask(ctx.store, {
+      steps: [{ label: "Long step", minMs: 4000, maxMs: 4000, failureRate: 0 }],
+    });
+    const { runId } = await (await ctx.app.request(`/api/tasks/${task.id}/run`, jsonPost())).json();
+
+    const controller = new AbortController();
+    const res = await ctx.app.request(`/api/runs/${runId}/events`, { signal: controller.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+
+    expect(ctx.bus.trackedRuns).toBeGreaterThan(0);
+
+    await reader.cancel();
+    controller.abort();
+    await ctx.runner.settled();
+
+    // Without stream.onAbort closing the subscription, every abandoned stream
+    // would leak one — invisible in a demo, fatal over days.
+    await vi.waitFor(() => expect(ctx.bus.trackedRuns).toBe(0), { timeout: 5000 });
   });
 });

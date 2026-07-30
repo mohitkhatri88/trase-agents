@@ -52,6 +52,14 @@ export function createRunner(deps: RunnerDeps): Runner {
           await deps.store.runs.appendEvent(run.id, "status", "failed");
           deps.bus.publish(run.id);
         })
+        // If the recovery itself fails — a database hiccup while recording the
+        // failure — there is nothing further to do, and an unhandled rejection
+        // here would take the whole process down under Node's default policy.
+        .catch((err: unknown) => {
+          console.error(
+            JSON.stringify({ level: "error", msg: "run recovery failed", runId: run.id, err: String(err) }),
+          );
+        })
         .finally(() => {
           inFlight.delete(task);
         });

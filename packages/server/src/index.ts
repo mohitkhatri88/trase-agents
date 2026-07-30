@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { existsSync } from "node:fs";
 import { alwaysFailRng, alwaysPassRng, realClock, realRng, scaledClock, SeededRng, type Clock, type Rng } from "@trase/core";
 import { initDb } from "./db/client.js";
 import { createStore } from "./store/index.js";
@@ -32,6 +33,8 @@ function resolveEngineDeps(): { clock: Clock; rng: Rng; mode: string } {
   return { clock, rng: realRng, mode: "random" };
 }
 
+const webDist = process.env.WEB_DIST ?? "packages/web/dist";
+
 async function main() {
   const { db } = await initDb();
 
@@ -52,11 +55,29 @@ async function main() {
     store,
     bus,
     runner,
-    webDist: process.env.NODE_ENV === "production" ? (process.env.WEB_DIST ?? "packages/web/dist") : undefined,
+    // Serve the built UI whenever it exists, rather than keying off NODE_ENV.
+    // `NODE_ENV=x cmd` is POSIX-only and would break `pnpm start` on Windows,
+    // and in dev this is harmless anyway: the browser talks to Vite on 5173,
+    // so nothing ever requests HTML from this port.
+    webDist: existsSync(webDist) ? webDist : undefined,
   });
 
   const port = Number(process.env.PORT ?? 3000);
   const server = serve({ fetch: app.fetch, port }, () => log("listening", { port, engine: mode }));
+
+  // Port 3000 is the most commonly occupied port on a developer machine, and a
+  // raw EADDRINUSE stack trace is a poor first impression for a project whose
+  // pitch is one-command setup.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `\nPort ${port} is already in use.\n` +
+          `Free it, or start on another port:  PORT=3001 pnpm dev\n`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
 
   // On deploy the platform sends SIGTERM. Without this, in-flight runs simply
   // vanish and are only explained on the next boot; with it they get an honest

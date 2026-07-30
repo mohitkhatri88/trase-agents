@@ -9,8 +9,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:generate": "drizzle-kit generate",
-    "seed": "tsx src/seed-cli.ts"
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@trase/core": "workspace:*",

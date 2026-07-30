@@ -154,10 +154,14 @@ export const E2E_AGENTS: SeedAgent[] = [
     name: "Slow And Steady",
     description: "Deterministic fixture agent, slow enough to cancel mid-run.",
     simulationProfile: {
+      // Deliberately long. Under the end-to-end suite's TRASE_SPEED=0.02 this
+      // is ~600ms of wall clock, which has to comfortably outlast Playwright's
+      // click-and-assert sequence or the cancel test races the run's own
+      // completion on a slower machine.
       steps: Array.from({ length: 6 }, (_, i) => ({
         label: `Long step ${i + 1}`,
-        minMs: 1500,
-        maxMs: 1500,
+        minMs: 5000,
+        maxMs: 5000,
         failureRate: 0,
       })),
     },

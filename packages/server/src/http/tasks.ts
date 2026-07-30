@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Store } from "../store/index.js";
 import type { Runner } from "../runner.js";
+import { RunAlreadyActiveError } from "../store/runs.js";
 import { badRequest, conflict, notFound, parseId, requireInt, requireString } from "./errors.js";
 
 export function taskRoutes(store: Store, runner: Runner) {
@@ -50,13 +51,25 @@ export function taskRoutes(store: Store, runner: Runner) {
 
     // Without this, double-clicking Run starts two concurrent runs whose logs
     // interleave in one pane and whose derived status flickers between them.
+    //
+    // Checked here for a clean error message, but NOT relied upon: two
+    // simultaneous requests can both pass this check before either inserts.
+    // The partial unique index on runs is what actually guarantees it, and
+    // the catch below turns the loser's constraint violation into the same 409.
     if (await store.runs.hasActiveRun(id)) {
       throw conflict("RUN_IN_PROGRESS", "This task already has a run in progress");
     }
 
-    const runId = await runner.startRun(id);
-    // 202, not 200: the run has been accepted and has NOT finished.
-    return c.json({ runId }, 202);
+    try {
+      const runId = await runner.startRun(id);
+      // 202, not 200: the run has been accepted and has NOT finished.
+      return c.json({ runId }, 202);
+    } catch (err) {
+      if (err instanceof RunAlreadyActiveError) {
+        throw conflict("RUN_IN_PROGRESS", "This task already has a run in progress");
+      }
+      throw err;
+    }
   });
 
   return routes;

@@ -78,11 +78,22 @@ describe("StatusBadge", () => {
 
   it("marks in-flight statuses as busy and finished ones as not", () => {
     const { unmount } = render(<StatusBadge status="running" />);
-    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByTestId("status-badge")).toHaveAttribute("aria-busy", "true");
     unmount();
 
     render(<StatusBadge status="completed" />);
-    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByTestId("status-badge")).toHaveAttribute("aria-busy", "false");
+  });
+
+  it("is only a live region when explicitly asked to be", () => {
+    // A live region per task row would make the polled list announce
+    // continuously to a screen reader, so only the focused run panel opts in.
+    const { unmount } = render(<StatusBadge status="running" />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    unmount();
+
+    render(<StatusBadge status="running" live />);
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 });
 

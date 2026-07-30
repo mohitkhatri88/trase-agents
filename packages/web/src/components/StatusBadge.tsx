@@ -18,11 +18,19 @@ const STYLES: Record<TaskStatus, string> = {
   cancelled: "bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200",
 };
 
-export function StatusBadge({ status }: { status: TaskStatus }) {
+export function StatusBadge({
+  status,
+  live = false,
+}: {
+  status: TaskStatus;
+  /** Announce changes to screen readers. Only the focused run panel sets this —
+   *  a live region per task row would make a polled list announce constantly. */
+  live?: boolean;
+}) {
   const busy = status === "running" || status === "queued";
   return (
     <span
-      role="status"
+      role={live ? "status" : undefined}
       aria-busy={busy}
       data-status={status}
       data-testid="status-badge"

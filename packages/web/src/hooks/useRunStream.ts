@@ -30,6 +30,7 @@ export function useRunStream(runId: number | null): RunStreamState {
   const [connected, setConnected] = useState(false);
   const [done, setDone] = useState(false);
   const lastSeq = useRef(0);
+  const refetching = useRef(false);
 
   const invalidate = useInvalidateAll();
   const invalidateRef = useRef(invalidate);
@@ -41,6 +42,7 @@ export function useRunStream(runId: number | null): RunStreamState {
     setConnected(false);
     setDone(false);
     lastSeq.current = 0;
+    refetching.current = false;
 
     if (runId === null) return;
 
@@ -75,15 +77,31 @@ export function useRunStream(runId: number | null): RunStreamState {
         // Replay is idempotent: anything at or before the cursor is a repeat.
         if (event.seq <= lastSeq.current) return;
 
-        // A gap means something was missed. Refetch rather than guess — two
-        // lines that make the stream self-healing instead of merely correct.
+        // A gap means something was missed. Refetch rather than guess, which
+        // makes the stream self-healing instead of merely correct.
+        //
+        // Guarded against re-entry: without the flag, several out-of-order
+        // frames each fire their own refetch, and whichever resolves LAST
+        // wins — so a slower, older snapshot can overwrite a newer one and
+        // drag lastSeq backwards.
         if (event.seq > lastSeq.current + 1) {
-          void api.runs.get(runId).then((fresh) => {
-            if (disposed) return;
-            setEvents(fresh.events);
-            setStatus(fresh.status);
-            lastSeq.current = fresh.events.at(-1)?.seq ?? 0;
-          });
+          if (refetching.current) return;
+          refetching.current = true;
+          void api.runs
+            .get(runId)
+            .then((fresh) => {
+              if (disposed) return;
+              setEvents(fresh.events);
+              setStatus(fresh.status);
+              lastSeq.current = fresh.events.at(-1)?.seq ?? 0;
+            })
+            .catch(() => {
+              // The heartbeat re-reads the store anyway, so a failed recovery
+              // costs latency rather than correctness.
+            })
+            .finally(() => {
+              refetching.current = false;
+            });
           return;
         }
 

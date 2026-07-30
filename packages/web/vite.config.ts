@@ -7,11 +7,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // SSE through a dev proxy buffers unless changeOrigin is set and
-      // compression is off. Verify with a live run, not just a page load —
-      // a buffered stream looks exactly like a frozen UI.
+      // Follows PORT so `PORT=3999 pnpm dev` doesn't leave the UI proxying
+      // to a port nothing is listening on.
+      //
+      // SSE through a dev proxy needs changeOrigin, and must not be buffered.
+      // Verify with a live run rather than a page load — a buffered stream
+      // looks exactly like a frozen UI.
       "/api": {
-        target: "http://localhost:3000",
+        target: process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`,
         changeOrigin: true,
         ws: false,
       },

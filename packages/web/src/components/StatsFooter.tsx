@@ -3,6 +3,9 @@ import { useStats } from "../queries.js";
 export function StatsFooter() {
   const stats = useStats();
 
+  if (stats.isError) {
+    return <p className="text-sm text-slate-400">Stats unavailable.</p>;
+  }
   if (!stats.data) {
     return <p className="text-sm text-slate-400">Loading stats…</p>;
   }

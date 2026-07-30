@@ -8,6 +8,10 @@ Manage agents, create tasks, and run them with live streaming progress.
 
 ---
 
+> **Status.** Everything below runs locally and is fully tested. Deployment to a public URL is the
+> one bonus not yet done — the design doc (`docs/specs/`) specifies the target and the plan; it simply
+> hasn't been executed yet.
+
 ## Setup
 
 ```bash
@@ -24,7 +28,7 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (119) |
+| `pnpm test` | Unit and integration tests (129) |
 | `pnpm test:e2e` | Playwright end-to-end tests (28) — run `pnpm --filter @trase/e2e install-browsers` once first |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
 | `pnpm typecheck` | TypeScript across every package |
@@ -125,9 +129,12 @@ or delivery guarantees at all.
 
 ### Four things that are easy to get wrong, and are handled
 
-1. **`?since=` as well as `Last-Event-ID`.** The browser sends that header only on its *own*
-   automatic reconnect. A user hard-refreshing mid-run opens a brand-new `EventSource` with no header
-   and would replay from zero, so the client passes the cursor it already has from the REST snapshot.
+1. **Two cursors, and the order between them.** The browser sends `Last-Event-ID` only on its *own*
+   automatic reconnect, so a hard refresh mid-run opens a brand-new `EventSource` with no header and
+   would replay from zero — hence `?since=`, supplied by the client from the REST snapshot. But the
+   header **wins when present**: `EventSource` reconnects to the same URL, so `?since=` is frozen at
+   whatever the cursor was when the stream first opened, while the header is current. Preferring the
+   query string would replay the whole log on every reconnect.
 2. **An explicit `done` event, and the client closes.** If the server just hangs up, `EventSource`
    treats it as a network failure and reconnects forever — one dangling connection per finished run.
 3. **Unsubscribe on abort.** A closed tab aborts the stream but leaves the bus subscription alive
@@ -147,10 +154,10 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**147 tests.** 119 unit and integration, 28 end-to-end.
+**157 tests.** 129 unit and integration, 28 end-to-end.
 
 ```bash
-pnpm test        # 119, ~2s
+pnpm test        # 129, ~2s
 pnpm test:e2e    # 28, ~12s
 ```
 
@@ -171,7 +178,7 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 | Suite | What it covers |
 |---|---|
 | `core` (16) | Engine state machine, failure injection, cancel before/between steps, seeded RNG reproducibility |
-| `server` (80) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
+| `server` (90) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
 | `web` (23) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
 | `e2e` (28) | Real browser against the real production build |
 
@@ -189,9 +196,12 @@ is stubbed; the real streaming path runs. `TRASE_SPEED=0.02` compresses sleeps s
 API, an empty dataset, a slow response, a 409, and a deliberately **gapped event stream** to prove the
 client refetches instead of silently rendering an incomplete log.
 
-The SSE tests assert against an **already-terminal run**, so the stream closes deterministically.
-Asserting against a live run means asserting against a stream that never ends — the fastest way to
-hang CI.
+Most SSE tests assert against an **already-terminal run**, so the stream closes deterministically —
+asserting against a live one means asserting against a stream that never ends, which is the fastest
+way to hang CI. But that alone would leave everything that only matters *while* a run is live with
+no coverage, so two further tests read the stream incrementally against a running task: one asserts
+that events arrive across multiple chunks with a gapless sequence, the other that abandoning the
+stream releases its bus subscription.
 
 ---
 
@@ -235,7 +245,7 @@ Rated honestly. 🟢 swap an implementation · 🟡 contained but real · 🔴 g
 | Six concurrent SSE streams (HTTP/1.1) | We open one; also ~100 over HTTP/2, which every HTTPS host negotiates | — | 🟢 |
 | SQLite → Postgres | Single process | Types survive, but the **schema file is rewritten** — Drizzle schemas are dialect-specific | 🟡 |
 | Running more than one instance | Not needed | Not just a store+bus swap: **orphan-recovery-on-boot becomes actively wrong**, since instance B would mark instance A's live runs as failed. Needs leases | 🟡 |
-| Client-side filtering | Nine agents | Server-side search and pagination | 🟡 |
+| Client-side filtering | Six agents | Server-side search and pagination | 🟡 |
 | A crash between the counter bump and the event insert skips a `seq` | The client treats a gap as "refetch", so the cost is one redundant request | — | 🟡 |
 | Runs don't survive a deploy | Nothing is running during a take-home deploy | Durable queue plus a separate worker | 🔴 |
 | No auth | Out of scope | Touches every endpoint | 🔴 |

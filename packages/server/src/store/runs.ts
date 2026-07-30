@@ -12,6 +12,25 @@ import { agents, runEvents, runs, tasks } from "../db/schema.js";
 
 const ACTIVE: RunStatus[] = ["queued", "running"];
 
+/** Thrown when the one-active-run-per-task index rejects an insert. */
+export class RunAlreadyActiveError extends Error {
+  constructor(public readonly taskId: number) {
+    super(`task ${taskId} already has an active run`);
+    this.name = "RunAlreadyActiveError";
+  }
+}
+
+/** Recognises a SQLite/libsql unique-constraint failure across driver layers. */
+function isUniqueViolation(err: unknown): boolean {
+  const parts: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; current instanceof Error && depth < 5; depth++) {
+    parts.push(current.message, String((current as { code?: string }).code ?? ""));
+    current = (current as { cause?: unknown }).cause;
+  }
+  return /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(parts.join(" "));
+}
+
 export interface RunStore {
   create(taskId: number): Promise<Run>;
   appendEvent(runId: number, type: EventType, message: string): Promise<{ seq: number; ts: string }>;
@@ -48,10 +67,19 @@ export function createRunStore(db: Db): RunStore {
      */
     async create(taskId) {
       const ts = new Date().toISOString();
-      const [row] = await db
-        .insert(runs)
-        .values({ taskId, status: "queued", startedAt: ts, seqCounter: 1 })
-        .returning();
+
+      let row: typeof runs.$inferSelect | undefined;
+      try {
+        [row] = await db
+          .insert(runs)
+          .values({ taskId, status: "queued", startedAt: ts, seqCounter: 1 })
+          .returning();
+      } catch (err) {
+        // A partial unique index enforces one active run per task, so two
+        // simultaneous requests cannot both succeed. The loser lands here.
+        if (isUniqueViolation(err)) throw new RunAlreadyActiveError(taskId);
+        throw err;
+      }
       if (!row) throw new Error("failed to insert run");
 
       await db.insert(runEvents).values({

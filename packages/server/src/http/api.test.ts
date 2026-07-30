@@ -323,3 +323,70 @@ describe("unknown API routes", () => {
     expect((await res.json()).error.code).toBe("NOT_FOUND");
   });
 });
+
+describe("concurrent run starts", () => {
+  it("lets exactly one of two simultaneous requests win", async () => {
+    const { app, store, runner } = await makeTestApp();
+    const { task } = await seedAgentAndTask(store, passingProfile);
+
+    // A check-then-act guard in the handler cannot prevent this: both requests
+    // can pass the hasActiveRun check before either inserts. Correctness comes
+    // from the partial unique index on runs.
+    const responses = await Promise.all([
+      app.request(`/api/tasks/${task.id}/run`, jsonPost()),
+      app.request(`/api/tasks/${task.id}/run`, jsonPost()),
+      app.request(`/api/tasks/${task.id}/run`, jsonPost()),
+    ]);
+    await runner.settled();
+
+    const statuses = responses.map((r) => r.status).sort();
+    expect(statuses).toEqual([202, 409, 409]);
+    expect(await store.runs.listForTask(task.id)).toHaveLength(1);
+  });
+
+  it("allows a new run once the previous one is terminal", async () => {
+    const { app, store, runner } = await makeTestApp();
+    const { task } = await seedAgentAndTask(store, passingProfile);
+
+    await app.request(`/api/tasks/${task.id}/run`, jsonPost());
+    await runner.settled();
+    expect((await app.request(`/api/tasks/${task.id}/run`, jsonPost())).status).toBe(202);
+    await runner.settled();
+
+    expect(await store.runs.listForTask(task.id)).toHaveLength(2);
+  });
+
+  it("keeps different tasks independent", async () => {
+    const { app, store, runner } = await makeTestApp();
+    const first = await seedAgentAndTask(store, passingProfile);
+    const second = await store.tasks.create({
+      title: "Second",
+      description: "d",
+      agentId: first.agent.id,
+    });
+
+    const responses = await Promise.all([
+      app.request(`/api/tasks/${first.task.id}/run`, jsonPost()),
+      app.request(`/api/tasks/${second.id}/run`, jsonPost()),
+    ]);
+    await runner.settled();
+
+    expect(responses.map((r) => r.status)).toEqual([202, 202]);
+  });
+
+  it("tolerates two simultaneous cancels", async () => {
+    const { app, store, runner } = await makeTestApp();
+    const { task } = await seedAgentAndTask(store, passingProfile);
+    const run = await store.runs.create(task.id);
+
+    const responses = await Promise.all([
+      app.request(`/api/runs/${run.id}/cancel`, jsonPost()),
+      app.request(`/api/runs/${run.id}/cancel`, jsonPost()),
+    ]);
+    await runner.settled();
+
+    // Both are accepted — requesting cancellation is idempotent.
+    expect(responses.every((r) => r.status === 202)).toBe(true);
+    expect(await store.runs.isCancelRequested(run.id)).toBe(true);
+  });
+});

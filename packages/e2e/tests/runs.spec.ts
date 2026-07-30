@@ -81,15 +81,33 @@ test.describe("running a task", () => {
     await runButton(row).click();
     await expect(row.getByTestId("run-log")).toContainText("Long step 1…");
 
-    // A hard reload sends no Last-Event-ID, so this only passes because the
-    // client supplies ?since= from the REST snapshot.
+    // Record the stream opened AFTER the reload, so this can't pass on the
+    // strength of the REST snapshot alone.
+    const streamUrls: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/events")) streamUrls.push(req.url());
+    });
+
+    // A hard reload sends no Last-Event-ID — the browser only replays that
+    // header on its own automatic reconnect — so resuming here depends
+    // entirely on the client passing ?since= from the REST snapshot.
     await page.reload();
     const reopened = await expandTask(page, FIXTURES.slow.task);
 
-    await expect(reopened.getByTestId("run-log")).toContainText("queued");
+    // Steps 1 and 2 happened before the reload; a later step can only appear
+    // if the stream genuinely resumed rather than just replaying a snapshot.
+    await expect(reopened.getByTestId("run-log")).toContainText("Long step 5…", {
+      timeout: 20_000,
+    });
     await expect(runStatus(reopened)).toHaveAttribute("data-status", "completed", {
       timeout: 20_000,
     });
+
+    // A stream was genuinely reopened, and it asked to resume from a cursor
+    // rather than replaying the log from the beginning.
+    expect(streamUrls.length).toBeGreaterThan(0);
+    const since = new URL(streamUrls[0]!).searchParams.get("since");
+    expect(Number(since)).toBeGreaterThan(0);
   });
 
   test("run history accumulates across runs", async ({ page }) => {

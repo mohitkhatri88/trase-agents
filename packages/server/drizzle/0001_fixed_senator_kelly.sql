@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `runs_one_active_per_task` ON `runs` (`task_id`) WHERE "runs"."status" IN ('queued', 'running');

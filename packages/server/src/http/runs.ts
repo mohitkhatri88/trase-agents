@@ -36,13 +36,20 @@ export function runRoutes(store: Store, bus: InProcessBus) {
     const run = await store.runs.get(id);
     if (!run) throw notFound("RUN_NOT_FOUND", `No run with id ${id}`);
 
-    // `?since=` takes precedence over Last-Event-ID, because the browser only
-    // sends that header on its OWN automatic reconnect. A user hard-refreshing
-    // mid-run opens a brand-new EventSource with no header at all, so the
-    // client passes the cursor it already knows from the REST snapshot.
-    const sinceParam = c.req.query("since");
+    // Two cursors, and the order between them matters.
+    //
+    // `?since=` covers the case the header cannot: a hard refresh mid-run opens
+    // a brand-new EventSource with no Last-Event-ID at all, so the client
+    // supplies the cursor it already has from the REST snapshot.
+    //
+    // But Last-Event-ID WINS when present. EventSource reconnects to the same
+    // URL, so `?since=` is frozen at whatever the cursor was when the stream
+    // first opened, while the header reflects the last event actually
+    // delivered. Preferring the query string would replay the whole log on
+    // every automatic reconnect.
     const headerParam = c.req.header("Last-Event-ID");
-    const parsed = Number(sinceParam ?? headerParam ?? 0);
+    const sinceParam = c.req.query("since");
+    const parsed = Number(headerParam ?? sinceParam ?? 0);
     let lastSent = Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 
     c.header("Cache-Control", "no-cache");

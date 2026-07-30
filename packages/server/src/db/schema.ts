@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import type { EventType, RunStatus, SimulationProfile } from "@trase/core";
 
 export const agents = sqliteTable("agents", {
@@ -42,7 +43,15 @@ export const runs = sqliteTable(
     // recent run" deterministic without a timestamp tiebreak.
     seqCounter: integer("seq_counter").notNull().default(0),
   },
-  (t) => [index("runs_task_idx").on(t.taskId, t.id)],
+  (t) => [
+    index("runs_task_idx").on(t.taskId, t.id),
+    // Enforces "at most one active run per task" in the database rather than
+    // by a check-then-act in the handler, which two simultaneous requests can
+    // interleave. The insert simply fails, and the handler turns that into 409.
+    uniqueIndex("runs_one_active_per_task")
+      .on(t.taskId)
+      .where(sql`${t.status} IN ('queued', 'running')`),
+  ],
 );
 
 export const runEvents = sqliteTable(

@@ -32,9 +32,6 @@ coverage/
 npm-debug.log*
 pnpm-debug.log*
 
-# Fly
-.fly/
-
 # Playwright
 playwright-report/
 test-results/
