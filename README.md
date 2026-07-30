@@ -2,15 +2,22 @@
 
 Manage agents, create tasks, and run them with live streaming progress.
 
+> [!IMPORTANT]
+> ## 🌐 Live app
+> ## → https://trase-agents.onrender.com
+>
+> ## 📦 Public repo
+> ## → https://github.com/mohitkhatri88/trase-agents
+>
+> The deployed instance runs the same single process this repo builds — one Node server on Render
+> serving the API and the built UI, from a persistent disk. **It doesn't sleep**, so it responds
+> immediately when you click it.
+
+---
+
 - **Agent** — a runnable capability. Execution is simulated here.
 - **Task** — a concrete job assigned to an agent.
 - **Run** — one execution attempt. A task can have many.
-
-**[Live app](https://trase-agents.onrender.com)** · **[Source](https://github.com/mohitkhatri88/trase-agents)**
-
-The deployed instance runs the same single process this repo builds — one Node server on Render
-serving the API and the built UI, with a persistent disk. It doesn't sleep, so the link is live when
-you click it.
 
 ---
 
@@ -556,3 +563,12 @@ with a 3 second budget:
 Note what survives: the steps that *did* complete are still in the log, so a reader can see exactly
 how far it got, and the message names the abandoned step and admits its effect is unknown. The run is
 terminal, so the task is immediately free to retry.
+
+---
+
+## Links
+
+| | |
+|---|---|
+| 🌐 **Live app** | https://trase-agents.onrender.com |
+| 📦 **Public repo** | https://github.com/mohitkhatri88/trase-agents |
