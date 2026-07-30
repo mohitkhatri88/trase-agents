@@ -1,0 +1,20 @@
+{
+  "name": "trase-agents",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @trase/core build && pnpm -r --parallel dev",
+    "build": "pnpm --filter @trase/core build && pnpm --filter @trase/web build && pnpm --filter @trase/server build",
+    "start": "NODE_ENV=production node packages/server/dist/index.js",
+    "test": "pnpm --filter @trase/core test && pnpm --filter @trase/server test && pnpm --filter @trase/web test",
+    "test:e2e": "pnpm --filter @trase/e2e test",
+    "typecheck": "pnpm -r typecheck",
+    "seed": "pnpm --filter @trase/server seed"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

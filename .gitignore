@@ -34,3 +34,7 @@ pnpm-debug.log*
 
 # Fly
 .fly/
+
+# Playwright
+playwright-report/
+test-results/

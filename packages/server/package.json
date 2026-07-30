@@ -1,0 +1,29 @@
+{
+  "name": "@trase/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "seed": "tsx src/seed-cli.ts"
+  },
+  "dependencies": {
+    "@trase/core": "workspace:*",
+    "@hono/node-server": "^1.14.0",
+    "@libsql/client": "^0.17.4",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  }
+}

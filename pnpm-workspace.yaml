@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+
+# Approved up front so a fresh clone never stops to ask. esbuild ships
+# prebuilt binaries and its postinstall only selects the right one for the
+# platform — nothing is compiled.
+allowBuilds:
+  esbuild: true
