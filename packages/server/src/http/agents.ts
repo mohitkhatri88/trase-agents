@@ -1,19 +1,38 @@
 import { Hono } from "hono";
-import type { SimulationProfile } from "@trase/core";
+import { AGENT_BEHAVIOURS, isAgentBehaviour, type AgentBehaviour, type SimulationProfile } from "@trase/core";
 import type { Store } from "../store/index.js";
-import { notFound, parseId, requireString } from "./errors.js";
+import { badRequest, notFound, parseId, requireString } from "./errors.js";
 
 /**
- * Agents created through the API get a generic three-step profile. The seeded
- * agents carry hand-written profiles with distinct personalities, which is what
- * makes every code path reachable by clicking rather than by waiting for luck.
+ * The profile behind each behaviour a client can ask for.
+ *
+ * The client picks a character; the server owns the numbers. An agent whose
+ * runs all felt identical would make the create feature hollow — you could
+ * make one but never tell it apart from any other.
  */
-const DEFAULT_PROFILE: SimulationProfile = {
-  steps: [
-    { label: "Preparing", minMs: 400, maxMs: 900, failureRate: 0.02 },
-    { label: "Working", minMs: 1200, maxMs: 2400, failureRate: 0.08 },
-    { label: "Finishing", minMs: 300, maxMs: 700, failureRate: 0.02 },
-  ],
+const BEHAVIOUR_PROFILES: Record<AgentBehaviour, SimulationProfile> = {
+  reliable: {
+    steps: [
+      { label: "Preparing", minMs: 400, maxMs: 900, failureRate: 0.01 },
+      { label: "Working", minMs: 900, maxMs: 1800, failureRate: 0.02 },
+      { label: "Finishing", minMs: 300, maxMs: 700, failureRate: 0.01 },
+    ],
+  },
+  flaky: {
+    steps: [
+      { label: "Preparing", minMs: 300, maxMs: 700, failureRate: 0.05 },
+      { label: "Working", minMs: 800, maxMs: 1600, failureRate: 0.3 },
+      { label: "Finishing", minMs: 300, maxMs: 700, failureRate: 0.1 },
+    ],
+  },
+  slow: {
+    steps: [
+      { label: "Preparing", minMs: 1500, maxMs: 2500, failureRate: 0.01 },
+      { label: "Working", minMs: 2500, maxMs: 4000, failureRate: 0.03 },
+      { label: "Verifying", minMs: 1500, maxMs: 2500, failureRate: 0.02 },
+      { label: "Finishing", minMs: 800, maxMs: 1400, failureRate: 0.01 },
+    ],
+  },
 };
 
 export function agentRoutes(store: Store) {
@@ -22,14 +41,24 @@ export function agentRoutes(store: Store) {
   routes.get("/", async (c) => c.json(await store.agents.list()));
 
   routes.post("/", async (c) => {
-    const body = await c.req.json().catch(() => ({}));
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     const name = requireString(body, "name", 120);
     const description = requireString(body, "description", 1000);
+
+    // Optional, so the endpoint stays backward compatible with a bare
+    // { name, description } post.
+    const raw = body.behaviour;
+    if (raw !== undefined && !isAgentBehaviour(raw)) {
+      throw badRequest("INVALID_FIELD", `behaviour must be one of: ${AGENT_BEHAVIOURS.join(", ")}`, {
+        field: "behaviour",
+      });
+    }
+    const behaviour: AgentBehaviour = raw ?? "reliable";
 
     const agent = await store.agents.create({
       name,
       description,
-      simulationProfile: DEFAULT_PROFILE,
+      simulationProfile: BEHAVIOUR_PROFILES[behaviour],
     });
     return c.json(agent, 201);
   });

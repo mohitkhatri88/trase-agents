@@ -28,13 +28,15 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (136) |
-| `pnpm test:e2e` | Playwright end-to-end tests (29) — run `pnpm --filter @trase/e2e install-browsers` once first |
+| `pnpm test` | Unit and integration tests (147) |
+| `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm --filter @trase/e2e install-browsers` once first |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
 | `pnpm typecheck` | TypeScript across every package |
 | `pnpm db:reset` | Delete the local database so the next boot reseeds |
 
-**Try this first:** open an agent, expand a task, hit **Run**, and watch the log stream in. The
+**Try this first:** open an agent, expand a task, hit **Run**, and watch the log stream in. Or press
+**+ New agent** to make your own — you pick a behaviour (reliable, flaky, slow) and the server owns
+the timings, so a created agent is immediately distinguishable when you run it. The
 *Flaky Web Scraper* fails about a third of the time, so it's the quickest way to see the error path
 and **Retry**. The *Nightly Reconciler* is slow enough to **Cancel** mid-run. Run something twice and
 a **Run history** section appears beneath the log — every past attempt, selectable.
@@ -165,11 +167,11 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**165 tests.** 136 unit and integration, 29 end-to-end.
+**179 tests.** 147 unit and integration, 32 end-to-end.
 
 ```bash
-pnpm test        # 136, ~2s
-pnpm test:e2e    # 29, ~13s
+pnpm test        # 147, ~2s
+pnpm test:e2e    # 32, ~14s
 ```
 
 ### The thing that makes this testable
@@ -189,9 +191,9 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 | Suite | What it covers |
 |---|---|
 | `core` (16) | Engine state machine, failure injection, cancel before/between steps, seeded RNG reproducibility |
-| `server` (90) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
-| `web` (30) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
-| `e2e` (29) | Real browser against the real production build |
+| `server` (95) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
+| `web` (37) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
+| `e2e` (32) | Real browser against the real production build |
 
 ### How the e2e suite stays deterministic
 
@@ -224,7 +226,8 @@ stream releases its bus subscription.
 | Database | SQLite via `@libsql/client` | Zero setup, the dominant constraint | `better-sqlite3` — v13 ships **zero prebuilt binaries** and falls back to a C++ compile, which fails on a machine without build tools |
 | DB access | Drizzle | Schema declared once; types and migrations derived from it; thin enough to drop to raw SQL | Prisma — codegen step, abstracts SQL away |
 | Framework | Hono | Port-free test client; `streamSSE` as a first-class helper | Express (manual SSE, no port-free tests); Fastify (close second — loses only on SSE being a plugin) |
-| Validation | ~30 hand-written lines | Four fields across two endpoints, and the graded check — *does this agent exist* — is a database lookup no schema validator can do | Zod, until a third non-trivial body appears |
+| Validation | ~30 hand-written lines | A handful of fields, and the graded check — *does this agent exist* — is a database lookup no schema validator can do | Zod, until a third non-trivial body appears |
+| Agent behaviour | A closed set the server owns | The client asks for a character (reliable/flaky/slow); the server picks the timings and failure rates. Arbitrary client-supplied numbers — a ten-minute step, a negative failure rate — never reach the engine, so there is nothing to validate | Accepting a full simulation profile from the client |
 | Frontend data | TanStack Query | Loading, error, empty, and refetch states are all graded | Plain hooks — reimplements the same thing, worse |
 | Routing | React Router | Two real views, and back/forward must work on selection | Hand-rolled `history` — `replaceState` creates no history entries, so back would leave the app |
 
@@ -381,7 +384,7 @@ runs created in the same millisecond. A real system would use ULIDs to avoid lea
 
 ```
 GET    /api/agents                 list
-POST   /api/agents                 create
+POST   /api/agents                 create — optional behaviour: reliable | flaky | slow
 GET    /api/agents/:id             detail
 GET    /api/agents/:id/tasks       tasks for an agent
 

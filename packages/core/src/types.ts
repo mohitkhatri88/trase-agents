@@ -19,6 +19,22 @@ export interface SimulationProfile {
   steps: SimulationStep[];
 }
 
+/**
+ * What a newly created agent should feel like when run.
+ *
+ * A closed set rather than a free-form profile: the client picks a character,
+ * the server owns the timings and failure rates. That keeps arbitrary
+ * user-supplied numbers — a 10-minute step, a negative failure rate — out of
+ * the engine entirely, so there is nothing to validate.
+ */
+export type AgentBehaviour = "reliable" | "flaky" | "slow";
+
+export const AGENT_BEHAVIOURS: readonly AgentBehaviour[] = ["reliable", "flaky", "slow"];
+
+export function isAgentBehaviour(value: unknown): value is AgentBehaviour {
+  return typeof value === "string" && (AGENT_BEHAVIOURS as readonly string[]).includes(value);
+}
+
 export interface Agent {
   id: number;
   name: string;

@@ -390,3 +390,82 @@ describe("concurrent run starts", () => {
     expect(await store.runs.isCancelRequested(run.id)).toBe(true);
   });
 });
+
+describe("agent behaviour on create", () => {
+  it("defaults to reliable when no behaviour is given", async () => {
+    const { app, store } = await makeTestApp();
+    const res = await app.request("/api/agents", jsonPost({ name: "A", description: "d" }));
+    expect(res.status).toBe(201);
+
+    const profile = await store.agents.getProfile((await res.json()).id);
+    expect(profile?.steps.every((s) => s.failureRate <= 0.05)).toBe(true);
+  });
+
+  it("gives a flaky agent a genuinely higher failure rate than a reliable one", async () => {
+    const { app, store } = await makeTestApp();
+
+    const reliable = await (
+      await app.request("/api/agents", jsonPost({ name: "R", description: "d", behaviour: "reliable" }))
+    ).json();
+    const flaky = await (
+      await app.request("/api/agents", jsonPost({ name: "F", description: "d", behaviour: "flaky" }))
+    ).json();
+
+    const worst = (steps: Array<{ failureRate: number }>) =>
+      Math.max(...steps.map((s) => s.failureRate));
+
+    const reliableProfile = await store.agents.getProfile(reliable.id);
+    const flakyProfile = await store.agents.getProfile(flaky.id);
+
+    expect(worst(flakyProfile!.steps)).toBeGreaterThan(worst(reliableProfile!.steps));
+  });
+
+  it("gives a slow agent longer steps than a reliable one", async () => {
+    const { app, store } = await makeTestApp();
+
+    const reliable = await (
+      await app.request("/api/agents", jsonPost({ name: "R", description: "d", behaviour: "reliable" }))
+    ).json();
+    const slow = await (
+      await app.request("/api/agents", jsonPost({ name: "S", description: "d", behaviour: "slow" }))
+    ).json();
+
+    const total = (steps: Array<{ maxMs: number }>) => steps.reduce((n, s) => n + s.maxMs, 0);
+
+    expect(total((await store.agents.getProfile(slow.id))!.steps)).toBeGreaterThan(
+      total((await store.agents.getProfile(reliable.id))!.steps),
+    );
+  });
+
+  it("rejects a behaviour outside the closed set", async () => {
+    const { app } = await makeTestApp();
+    const res = await app.request(
+      "/api/agents",
+      jsonPost({ name: "A", description: "d", behaviour: "chaotic" }),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("INVALID_FIELD");
+    expect(body.error.details.field).toBe("behaviour");
+  });
+
+  it("makes a created agent immediately usable for a task and a run", async () => {
+    const { app, store, runner } = await makeTestApp();
+
+    const agent = await (
+      await app.request("/api/agents", jsonPost({ name: "Made in the UI", description: "d" }))
+    ).json();
+    const task = await (
+      await app.request("/api/tasks", jsonPost({ title: "T", description: "d", agentId: agent.id }))
+    ).json();
+
+    const run = await app.request(`/api/tasks/${task.id}/run`, jsonPost());
+    expect(run.status).toBe(202);
+
+    await runner.settled();
+    const { runId } = await run.json();
+    const finished = await store.runs.get(runId);
+    expect(["completed", "failed"]).toContain(finished?.status);
+  });
+});

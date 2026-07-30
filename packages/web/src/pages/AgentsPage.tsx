@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import { useAgents, useTasks } from "../queries.js";
 import { Layout } from "../components/Layout.js";
 import { AgentList } from "../components/AgentList.js";
+import { NewAgentForm } from "../components/NewAgentForm.js";
 import { TaskList } from "../components/TaskList.js";
 import { NewTaskForm } from "../components/NewTaskForm.js";
 import { RunPanel } from "../components/RunPanel.js";
@@ -19,7 +20,9 @@ export function AgentsPage() {
   return (
     <Layout>
       <div className="grid gap-6 md:grid-cols-[minmax(260px,1fr)_1.6fr]">
-        <section aria-label="Agents" className="min-w-0">
+        <section aria-label="Agents" className="min-w-0 space-y-3">
+          <NewAgentForm />
+
           {agents.isPending ? (
             <Skeleton rows={4} />
           ) : agents.isError ? (

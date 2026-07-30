@@ -60,6 +60,17 @@ export function useInvalidateAll() {
   };
 }
 
+export function useCreateAgent() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: api.agents.create,
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: queryKeys.agents });
+      void client.invalidateQueries({ queryKey: queryKeys.stats });
+    },
+  });
+}
+
 export function useCreateTask() {
   const invalidate = useInvalidateAll();
   return useMutation({ mutationFn: api.tasks.create, onSuccess: invalidate });

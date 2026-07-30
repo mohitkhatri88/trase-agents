@@ -1,4 +1,4 @@
-import type { Agent, Run, RunEvent, Stats, Task, TaskWithAgent } from "@trase/core";
+import type { Agent, AgentBehaviour, Run, RunEvent, Stats, Task, TaskWithAgent } from "@trase/core";
 
 export class ApiClientError extends Error {
   constructor(
@@ -43,7 +43,7 @@ export const api = {
   agents: {
     list: () => request<Agent[]>("/agents"),
     get: (id: number) => request<Agent>(`/agents/${id}`),
-    create: (input: { name: string; description: string }) =>
+    create: (input: { name: string; description: string; behaviour?: AgentBehaviour }) =>
       request<Agent>("/agents", post(input)),
   },
   tasks: {
