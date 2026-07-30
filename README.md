@@ -6,11 +6,13 @@ Manage agents, create tasks, and run them with live streaming progress.
 - **Task** — a concrete job assigned to an agent.
 - **Run** — one execution attempt. A task can have many.
 
----
+**[Live app](https://trase-agents.onrender.com)** · **[Source](https://github.com/mohitkhatri88/trase-agents)**
 
-> **Status.** Everything below runs locally and is fully tested. The deployment artifacts
-> (`Dockerfile`, `render.yaml`) are built and verified against a local container; the public URL goes
-> live when the Render service is created — see [Deployment](#deployment).
+The deployed instance runs the same single process this repo builds — one Node server on Render
+serving the API and the built UI, with a persistent disk. It doesn't sleep, so the link is live when
+you click it.
+
+---
 
 ## Setup
 
@@ -28,7 +30,7 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (158) |
+| `pnpm test` | Unit and integration tests (159) |
 | `pnpm test:e2e` | Playwright end-to-end tests (32) — run `pnpm e2e:install` once first |
 | `pnpm test:e2e:report` | Open the HTML report from the last e2e run |
 | `pnpm test:e2e:ui` | Playwright's interactive UI mode, for stepping through a test |
@@ -169,10 +171,10 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**190 tests.** 158 unit and integration, 32 end-to-end.
+**191 tests.** 159 unit and integration, 32 end-to-end.
 
 ```bash
-pnpm test               # 158, ~2s
+pnpm test               # 159, ~2s
 pnpm test:e2e           # 32, ~14s
 pnpm test:e2e:report    # HTML report from the last run — traces, screenshots
 ```
@@ -203,7 +205,7 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 | `core` (23) | Engine state machine, failure injection, cancel before/between steps, the time budget, seeded RNG reproducibility |
 | `server` (99) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
 | `web` (37) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
-| `e2e` (32) | Real browser against the real production build |
+| `e2e` (32) | Real browser against the real production build — the same artefact that's deployed |
 
 ### How the e2e suite stays deterministic
 
@@ -408,8 +410,10 @@ docker build -t trase-agents .
 docker run -p 3000:3000 -v trase-data:/data -e DATABASE_URL=file:/data/app.db trase-agents
 ```
 
-**To Render:** dashboard → **Blueprints** → New Blueprint Instance → this repo. Not *New → Static
-Site*; this is a Node process serving an API and the built UI from one port, which is a **Web
+**Live at [trase-agents.onrender.com](https://trase-agents.onrender.com).**
+
+To reproduce: Render dashboard → **Blueprints** → New Blueprint Instance → this repo. Not *New →
+Static Site*; this is a Node process serving an API and the built UI from one port, which is a **Web
 Service**. `render.yaml` declares the rest and auto-deploys on push to `main`.
 
 `numInstances: 1` is a **correctness constraint, not a cost setting**. The event bus is in-process
@@ -428,7 +432,7 @@ A solo project needs only the free Hobby workspace. Note that paying for Pro wou
 free tier's cold start, because sleeping is a property of the *instance type*, not the workspace — a
 $25 upgrade with a Free instance still sleeps.
 
-The blueprint runs a **Starter instance (~$7/month, prorated by the second) on the free Hobby
+The deployed instance is a **Starter (~$7/month, prorated by the second) on the free Hobby
 workspace**, plus a 1GB disk. That buys the two things the free tier can't give:
 
 - **It never sleeps.** Free spins down after 15 minutes idle and takes ~1 minute to wake, so a link
@@ -439,18 +443,27 @@ To run at zero cost instead: set `plan: free`, drop the `disk:` block, and point
 `file:/tmp/trase/app.db`. Seeding runs on boot, so every wake still serves a clean populated demo —
 you just trade the cold start back in.
 
-### Verified against the real container
+### Verified in production, not just locally
 
-These are the failures that only appear once containerised:
+These are the failures that only appear once deployed, so they were checked against the live URL:
 
 | Checked | Result |
 |---|---|
-| Static UI, SPA catch-all on `/tasks`, API, `/health` | All 200, correct content types |
-| A run streaming end to end | 8 SSE frames, terminal `done` |
-| Restart with a disk attached | Data survived, no reseed |
-| Boot with an ephemeral path and no volume | Seeds itself, serves normally |
-| `SIGTERM` mid-run | Run marked *"Interrupted by a server shutdown"*, not silently lost |
-| Platform-injected `PORT` | Binds correctly (Render assigns its own) |
+| `/health` | Reports the deployed commit SHA |
+| Static UI, SPA catch-all on `/agents` and `/tasks` | All 200, correct content types |
+| Unknown `/api/*` path | JSON error, not the SPA's HTML |
+| **SSE through Render's proxy** | **Streamed incrementally** — frames spread across nine seconds of wall clock, not buffered to the end |
+| Cancel mid-run | Reached `cancelled`, stopping cleanly between steps |
+| 409 on concurrent run starts | Extra attempts rejected |
+| 400 on a nonexistent agent | Correct code and `details.field` |
+
+Proxy buffering is the classic works-locally-dead-in-production failure for SSE, and it looks exactly
+like a frozen UI — so it was measured by timestamping each frame's arrival rather than assumed.
+
+Also checked against a local container, since these need one: a restart with a disk attached (data
+survived, no reseed), a boot with no volume at all (seeds itself), `SIGTERM` mid-run (the run is
+marked *"Interrupted by a server shutdown"* rather than silently vanishing), and a
+platform-injected `PORT`.
 
 ## Data model
 
