@@ -68,7 +68,7 @@ test.describe("running a task", () => {
     await runButton(row).click();
     await expect(runStatus(row)).toHaveAttribute("data-status", "running");
 
-    await row.getByTestId("run-panel").getByRole("button", { name: /cancel/i }).click();
+    await row.getByTestId("run-panel").getByRole("button", { name: "Cancel", exact: true }).click();
 
     await expect(runStatus(row)).toHaveAttribute("data-status", "cancelled");
     await expect(runStatus(row)).toContainText("Cancelled");
@@ -127,6 +127,39 @@ test.describe("running a task", () => {
     const taskId = await row.getAttribute("data-task-id");
     const detail = await (await page.request.get(`/api/tasks/${taskId}`)).json();
     expect(detail.runs).toHaveLength(2);
+  });
+
+  test("shows every past attempt, and replays an older one on demand", async ({ page }) => {
+    // Two failures in a row, so there is a genuine history to inspect.
+    await openAgent(page, FIXTURES.fails.agent);
+    const row = await expandTask(page, FIXTURES.fails.task);
+
+    for (let i = 0; i < 2; i++) {
+      await runButton(row).click();
+      await expect(runStatus(row)).toHaveAttribute("data-status", "failed");
+    }
+
+    const history = row.getByTestId("run-history");
+    await expect(history).toBeVisible();
+    await history.click(); // expand the <details>
+
+    const items = row.getByTestId("run-history-item");
+    expect(await items.count()).toBeGreaterThanOrEqual(2);
+
+    // Nothing is overwritten: the earlier attempt is still there, with its own
+    // error, because a retry is a new row rather than a mutation.
+    await expect(items.nth(1)).toContainText("Failed");
+    await expect(items.nth(1)).toContainText("Reticulating splines failed");
+
+    // Selecting it replays that run's log without opening a stream — a
+    // finished run has nothing left to say.
+    await items.nth(1).click();
+    await expect(items.nth(1)).toHaveAttribute("aria-current", "true");
+    await expect(row.getByTestId("run-log")).toContainText("Reticulating splines failed");
+
+    // And there is a way back to the live run.
+    await row.getByRole("button", { name: /back to latest run/i }).click();
+    await expect(items.first()).toHaveAttribute("aria-current", "true");
   });
 });
 

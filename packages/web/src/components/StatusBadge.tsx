@@ -21,11 +21,15 @@ const STYLES: Record<TaskStatus, string> = {
 export function StatusBadge({
   status,
   live = false,
+  testId = "status-badge",
 }: {
   status: TaskStatus;
   /** Announce changes to screen readers. Only the focused run panel sets this —
    *  a live region per task row would make a polled list announce constantly. */
   live?: boolean;
+  /** Overridden by the run panel header so tests can distinguish "the status of
+   *  the run on screen" from the badges in the history list beneath it. */
+  testId?: string;
 }) {
   const busy = status === "running" || status === "queued";
   return (
@@ -33,7 +37,7 @@ export function StatusBadge({
       role={live ? "status" : undefined}
       aria-busy={busy}
       data-status={status}
-      data-testid="status-badge"
+      data-testid={testId}
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${STYLES[status]}`}
     >
       {busy ? <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> : null}

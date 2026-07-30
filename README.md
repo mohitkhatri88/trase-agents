@@ -28,14 +28,20 @@ install. Sample agents and tasks are seeded automatically on first boot.
 | Command | What it does |
 |---|---|
 | `pnpm dev` | Vite on 5173 + API on 3000, proxied. The one command you need |
-| `pnpm test` | Unit and integration tests (130) |
-| `pnpm test:e2e` | Playwright end-to-end tests (28) — run `pnpm --filter @trase/e2e install-browsers` once first |
+| `pnpm test` | Unit and integration tests (136) |
+| `pnpm test:e2e` | Playwright end-to-end tests (29) — run `pnpm --filter @trase/e2e install-browsers` once first |
 | `pnpm build && pnpm start` | Production mode locally: one process on :3000 serving API *and* UI |
 | `pnpm typecheck` | TypeScript across every package |
+| `pnpm db:reset` | Delete the local database so the next boot reseeds |
 
 **Try this first:** open an agent, expand a task, hit **Run**, and watch the log stream in. The
 *Flaky Web Scraper* fails about a third of the time, so it's the quickest way to see the error path
-and **Retry**. The *Nightly Reconciler* is slow enough to **Cancel** mid-run.
+and **Retry**. The *Nightly Reconciler* is slow enough to **Cancel** mid-run. Run something twice and
+a **Run history** section appears beneath the log — every past attempt, selectable.
+
+**On seed data:** seeding is `seedIfEmpty`, not seed-on-every-boot. It runs only when there are no
+agents, so your own tasks and runs survive restarts and are never overwritten. `pnpm db:reset`
+deletes the local database when you want the sample data back.
 
 ---
 
@@ -110,6 +116,11 @@ multiple simultaneous viewers, resume-after-disconnect, and idempotent replay �
 design: retry, run history, and random failure are the same feature seen from different angles. Run
 history is `SELECT * FROM runs WHERE task_id = ?`.
 
+The UI makes that visible rather than leaving it as an assertion: run a task more than once and every
+attempt is listed beneath the log, with its own status, duration and error. Selecting an older one
+replays its log from the store — and opens no stream, because a finished run has nothing left to say.
+Nothing is ever overwritten, so the whole history stays inspectable.
+
 **Tasks have no status column.** A task's status is derived from its most recent run. A denormalised
 column would create two places that can disagree, and that disagreement is always found by a user
 rather than by a test.
@@ -154,11 +165,11 @@ no matter how many runs are executing — which sidesteps the browser's per-orig
 
 ## Testing
 
-**158 tests.** 130 unit and integration, 28 end-to-end.
+**165 tests.** 136 unit and integration, 29 end-to-end.
 
 ```bash
-pnpm test        # 130, ~2s
-pnpm test:e2e    # 28, ~12s
+pnpm test        # 136, ~2s
+pnpm test:e2e    # 29, ~13s
 ```
 
 ### The thing that makes this testable
@@ -179,8 +190,8 @@ ignored tests. It costs about fifteen lines and it's the highest-leverage decisi
 |---|---|
 | `core` (16) | Engine state machine, failure injection, cancel before/between steps, seeded RNG reproducibility |
 | `server` (90) | Store behaviour, sequence integrity, orphan recovery, all endpoints, **400 on a nonexistent agent**, 409 on double-run, cancel, and the full SSE contract |
-| `web` (24) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
-| `e2e` (28) | Real browser against the real production build |
+| `web` (30) | Filter behaviour (name, description, case, clearing, empty state) and run status display driven by a mock `EventSource` |
+| `e2e` (29) | Real browser against the real production build |
 
 ### How the e2e suite stays deterministic
 

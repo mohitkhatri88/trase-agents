@@ -30,6 +30,19 @@ export function useTasks(agentId?: number) {
   });
 }
 
+/**
+ * Task detail, which carries the full run history. Fetched only for the task
+ * the user has expanded — the list endpoint deliberately doesn't carry runs.
+ */
+export function useTask(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.task(id ?? -1),
+    queryFn: () => api.tasks.get(id as number),
+    enabled: id !== null,
+    refetchInterval: LIST_POLL_MS,
+  });
+}
+
 export function useStats() {
   return useQuery({
     queryKey: queryKeys.stats,

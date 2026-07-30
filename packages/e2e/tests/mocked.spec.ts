@@ -239,7 +239,7 @@ test.describe("streaming edge cases", () => {
     await expect(row.getByTestId("run-log").locator('[data-event-type="error"]')).toContainText(
       "Step blew up",
     );
-    await expect(panel.getByTestId("status-badge")).toHaveAttribute("data-status", "failed");
+    await expect(panel.getByTestId("current-run-status")).toHaveAttribute("data-status", "failed");
     await expect(panel.getByRole("button", { name: /retry/i })).toBeVisible();
   });
 });

@@ -45,7 +45,7 @@ export async function expandTask(page: Page, title: string) {
  * both, so every assertion says which one it means.
  */
 export const runStatus = (row: Locator) =>
-  row.getByTestId("run-panel").getByTestId("status-badge");
+  row.getByTestId("run-panel").getByTestId("current-run-status");
 
 export const taskStatus = (row: Locator) =>
   row.getByTestId("status-badge").first();

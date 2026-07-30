@@ -26,27 +26,44 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   </QueryClientProvider>
 );
 
-function stubRunSnapshot(status: RunStatus) {
+const run = (over: Record<string, unknown> = {}) => ({
+  id: 7,
+  taskId: 1,
+  status: "running",
+  startedAt: new Date().toISOString(),
+  finishedAt: null,
+  error: null,
+  cancelRequested: false,
+  ...over,
+});
+
+const json = (body: unknown) =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+/** Answers both routes the panel needs: the run snapshot and the task detail
+ *  that carries run history. */
+function stubApi(status: RunStatus, runs: Array<Record<string, unknown>> = []) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            id: 7,
-            taskId: 1,
-            status,
-            startedAt: "",
-            finishedAt: null,
-            error: null,
-            cancelRequested: false,
-            events: [{ id: 1, runId: 7, seq: 1, ts: "", type: "status", message: "queued" }],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.includes("/api/runs/")) {
+        return json({
+          ...run({ status }),
+          events: [{ id: 1, runId: 7, seq: 1, ts: "", type: "status", message: "queued" }],
+        });
+      }
+
+      return json({ ...baseTask, runs: runs.length > 0 ? runs : [run({ status })] });
+    }),
   );
 }
+
+const stubRunSnapshot = (status: RunStatus) => stubApi(status);
 
 const renderPanel = (task: TaskWithAgent = baseTask) =>
   render(<RunPanel task={task} />, { wrapper });
@@ -161,14 +178,14 @@ describe("RunPanel", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getByTestId("status-badge")).toHaveAttribute("data-status", "completed"),
+      expect(screen.getByTestId("current-run-status")).toHaveAttribute("data-status", "completed"),
     );
   });
 
   it("shows Cancel while active and swaps to Run once finished", async () => {
     renderPanel();
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
 
     act(() => {
       MockEventSource.latest().emit("run.status", {
@@ -178,7 +195,7 @@ describe("RunPanel", () => {
     });
 
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: /^run$/i })).toBeInTheDocument();
   });
@@ -199,7 +216,7 @@ describe("RunPanel", () => {
 
     expect(await screen.findByRole("button", { name: /retry/i })).toBeInTheDocument();
     expect(screen.getByText("Extracting fields failed")).toBeInTheDocument();
-    expect(screen.getByTestId("status-badge")).toHaveAttribute("data-status", "failed");
+    expect(screen.getByTestId("current-run-status")).toHaveAttribute("data-status", "failed");
   });
 
   it("closes the stream when the run signals done", async () => {
@@ -227,5 +244,79 @@ describe("RunPanel", () => {
 
     unmount();
     expect(MockEventSource.latest().closed).toBe(true);
+  });
+});
+
+describe("run history", () => {
+  const historyRuns = [
+    { ...run({ id: 7, status: "failed", error: "Extracting fields failed", finishedAt: new Date().toISOString() }) },
+    { ...run({ id: 6, status: "completed", finishedAt: new Date().toISOString() }) },
+    { ...run({ id: 5, status: "cancelled", finishedAt: new Date().toISOString() }) },
+  ];
+
+  it("is hidden when a task has only ever run once", async () => {
+    stubApi("completed", [run({ id: 7, status: "completed" })]);
+    renderPanel({ ...baseTask, status: "completed" });
+
+    await screen.findByTestId("run-log");
+    expect(screen.queryByTestId("run-history")).not.toBeInTheDocument();
+  });
+
+  it("lists every attempt, newest first, once there is more than one", async () => {
+    stubApi("failed", historyRuns);
+    renderPanel({ ...baseTask, status: "failed" });
+
+    const items = await screen.findAllByTestId("run-history-item");
+    expect(items).toHaveLength(3);
+    // Newest first, and numbered so the oldest attempt reads as #1.
+    expect(items[0]).toHaveAttribute("data-run-id", "7");
+    expect(items[2]).toHaveAttribute("data-run-id", "5");
+    expect(items[0]).toHaveTextContent("#3");
+    expect(items[2]).toHaveTextContent("#1");
+  });
+
+  it("surfaces the error of a failed attempt in the list", async () => {
+    stubApi("failed", historyRuns);
+    renderPanel({ ...baseTask, status: "failed" });
+
+    const items = await screen.findAllByTestId("run-history-item");
+    expect(items[0]).toHaveTextContent("Extracting fields failed");
+  });
+
+  it("marks which attempt is currently on screen", async () => {
+    stubApi("failed", historyRuns);
+    renderPanel({ ...baseTask, status: "failed" });
+
+    const items = await screen.findAllByTestId("run-history-item");
+    expect(items[0]).toHaveAttribute("aria-current", "true");
+    expect(items[1]).not.toHaveAttribute("aria-current");
+  });
+
+  it("shows a way back to the live run after selecting an older one", async () => {
+    stubApi("failed", historyRuns);
+    renderPanel({ ...baseTask, status: "failed" });
+
+    const items = await screen.findAllByTestId("run-history-item");
+    act(() => {
+      items[1]!.click();
+    });
+
+    expect(await screen.findByRole("button", { name: /back to latest run/i })).toBeInTheDocument();
+  });
+
+  it("never offers Cancel while an older attempt is on screen", async () => {
+    // The task is live, but the run being viewed is a finished one — Cancel
+    // belongs to the live run only.
+    stubApi("running", historyRuns);
+    renderPanel();
+
+    const items = await screen.findAllByTestId("run-history-item");
+    act(() => {
+      items[2]!.click();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument(),
+    );
   });
 });

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { isTerminalStatus, type TaskWithAgent } from "@trase/core";
 import { useRunStream } from "../hooks/useRunStream.js";
-import { useCancelRun, useRunTask } from "../queries.js";
+import { useCancelRun, useRunTask, useTask } from "../queries.js";
 import { StatusBadge } from "./StatusBadge.js";
+import { RunHistory } from "./RunHistory.js";
 
 export function RunPanel({ task }: { task: TaskWithAgent }) {
   // POST /run returns the new runId immediately, but `task.latestRunId` only
@@ -11,6 +12,10 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
   // that round-trip takes, and a second click lands on the live run and gets
   // a 409. Invisible on localhost, obvious on a slow connection.
   const [startedRunId, setStartedRunId] = useState<number | null>(null);
+  // Set when the user picks an older attempt out of the history.
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+
+  const detail = useTask(task.id);
   const runTask = useRunTask();
   const cancelRun = useCancelRun();
   const logRef = useRef<HTMLOListElement>(null);
@@ -23,8 +28,11 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
     }
   }, [task.latestRunId, startedRunId]);
 
-  const activeRunId = startedRunId ?? task.latestRunId;
-  const stream = useRunStream(activeRunId);
+  const latestRunId = startedRunId ?? task.latestRunId;
+  const viewingRunId = selectedRunId ?? latestRunId;
+  const viewingHistorical = selectedRunId !== null && selectedRunId !== latestRunId;
+
+  const stream = useRunStream(viewingRunId);
 
   // Keep the newest line in view without yanking the whole page.
   useEffect(() => {
@@ -35,19 +43,25 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
   // While a freshly started run is still unknown to the list, trust the stream
   // rather than the task row, which still describes the previous attempt.
   const status =
-    stream.status ?? (startedRunId !== null ? "queued" : task.status === "never_run" ? null : task.status);
-  const active = status !== null && !isTerminalStatus(status);
+    stream.status ??
+    (startedRunId !== null ? "queued" : task.status === "never_run" ? null : task.status);
+
+  // An older run is finished by definition, so never offer Cancel while one is
+  // on screen — that button belongs to the live run only.
+  const active = !viewingHistorical && status !== null && !isTerminalStatus(status);
   const recoverable = status === "failed" || status === "cancelled";
+
+  const runs = detail.data?.runs ?? [];
 
   return (
     <div className="space-y-3" data-testid="run-panel">
       <div className="flex flex-wrap items-center gap-2">
-        {status ? <StatusBadge status={status} live /> : null}
+        {status ? <StatusBadge status={status} live testId="current-run-status" /> : null}
 
         {active ? (
           <button
             type="button"
-            onClick={() => activeRunId !== null && cancelRun.mutate(activeRunId)}
+            onClick={() => viewingRunId !== null && cancelRun.mutate(viewingRunId)}
             disabled={cancelRun.isPending}
             className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-slate-600"
           >
@@ -58,7 +72,11 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
             type="button"
             onClick={() =>
               runTask.mutate(task.id, {
-                onSuccess: ({ runId }) => setStartedRunId(runId),
+                onSuccess: ({ runId }) => {
+                  setStartedRunId(runId);
+                  // Snap back to the live run if an older one was on screen.
+                  setSelectedRunId(null);
+                },
               })
             }
             disabled={runTask.isPending}
@@ -67,6 +85,16 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
             {runTask.isPending ? "Starting…" : recoverable ? "Retry" : "Run"}
           </button>
         )}
+
+        {viewingHistorical ? (
+          <button
+            type="button"
+            onClick={() => setSelectedRunId(null)}
+            className="text-xs text-slate-500 underline underline-offset-2"
+          >
+            Back to latest run
+          </button>
+        ) : null}
 
         {active && !stream.connected ? (
           <span className="text-xs text-amber-600">Reconnecting…</span>
@@ -107,9 +135,11 @@ export function RunPanel({ task }: { task: TaskWithAgent }) {
             </li>
           ))}
         </ol>
-      ) : activeRunId === null ? (
+      ) : viewingRunId === null ? (
         <p className="text-sm text-slate-500">This task has not run yet.</p>
       ) : null}
+
+      <RunHistory runs={runs} selectedRunId={viewingRunId} onSelect={setSelectedRunId} />
     </div>
   );
 }
